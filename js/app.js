@@ -552,6 +552,15 @@ async function initApp() {
         listarVentas();
     });
 
+    // 4. Cuando hagan clic en Contratos
+    document.getElementById("linkContratos").addEventListener("click", (e) => {
+        e.preventDefault();
+        if (!esUsuarioEmpresa()) return;
+        cambiarSeccion('seccionContratos');
+        configurarBuscadorContratos();
+        listarContratos();
+    });
+
     // === INTERACTIVIDAD DEL SWITCH DE VENTAS FINALIZADAS ===
     const checkboxOcultar = document.getElementById("toggleVentasFinalizadas");
     if (checkboxOcultar) {
@@ -577,7 +586,7 @@ async function initApp() {
         });
     }
 
-    // 4. Cuando hagan clic en Productos
+    // 5. Cuando hagan clic en Productos
     document.getElementById("linkProductos").addEventListener("click", async (e) => {
         e.preventDefault();
         if (!esUsuarioEmpresa()) return;
@@ -585,7 +594,7 @@ async function initApp() {
         await listarProductos();
     });
 
-    // 5. Cuando hagan clic en Proveedores
+    // 6. Cuando hagan clic en Proveedores
     document.getElementById("linkProveedores").addEventListener("click", (e) => {
         e.preventDefault();
         if (!esUsuarioEmpresa()) return;

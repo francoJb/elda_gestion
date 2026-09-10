@@ -109,6 +109,9 @@
                     <a id="linkVentas" href="#" class="flex items-center p-3 rounded-xl text-slate-300 hover:bg-cyan-400/10 hover:text-cyan-200 transition-all">
                         <span>🛒 Ventas</span>
                     </a>
+                    <a id="linkContratos" href="#" class="flex items-center p-3 rounded-xl text-slate-300 hover:bg-cyan-400/10 hover:text-cyan-200 transition-all">
+                        <span>📄 Contratos</span>
+                    </a>
                     <a id="linkClientes" href="#" class="flex items-center p-3 rounded-xl text-slate-300 hover:bg-cyan-400/10 hover:text-cyan-200 transition-all">
                         <span>👥 Clientes</span>
                     </a>
@@ -451,6 +454,123 @@
                 <div id="pantallaGenerarVenta" class="hidden min-h-screen bg-gray-50 dark:bg-slate-900">
                     <header class="bg-gray-800 text-white p-4 shadow-lg flex justify-between items-center">
                         <h2 class="text-xl font-bold">NUEVA VENTA</h2>
+                        <span id="reloj-venta" class="text-lg text-gray-400"></span>
+                    </header>
+                    <div class="grid grid-cols-12 gap-4 md:gap-6 p-4 md:p-6">
+                        <aside class="col-span-12 lg:col-span-3 space-y-5 card card-compact card-bordered">                             
+                            <div class="border-b dark:border-slate-700 pb-4">
+                                <label class="block text-xs uppercase font-bold text-gray-500 dark:text-gray-400 mb-1">Cliente</label>
+                                <div class="flex gap-1">
+                                    <input type="text" id="v-cliente-input" value="Consumidor Final" placeholder="Ingrese cliente..." 
+                                        class="flex-1 p-2 text-sm border rounded bg-transparent font-medium focus:border-blue-500 outline-none">
+                                    
+                                    <button onclick="abrirBuscadorClientes()" type="button" class="transition-all transform hover:scale-150 flex items-center gap-2">
+                                        🔍
+                                    </button>
+                                </div>
+                                <p class="text-[10px] text-gray-400 mt-1">Presione la lupa para buscar cliente</p>
+                            </div>
+                            
+                            <div>
+                                <label class="block text-xs uppercase font-bold text-gray-500 dark:text-gray-400 mb-1">Producto</label>
+                                <div class="flex gap-1">
+                                    <input type="text" id="v-sku-directo" placeholder="Ingrese SKU..." 
+                                        onkeypress="checkEnterVenta(event)"
+                                        class="flex-1 p-2 text-sm border rounded bg-transparent font-mono focus:border-blue-500 outline-none">
+                                    
+                                    <button onclick="abrirBuscadorProductos()" type="button" class="transition-all transform hover:scale-150 flex items-center gap-2">
+                                        🔍
+                                    </button>
+                                </div>
+                                <p class="text-[10px] text-gray-400 mt-1">Presione Enter o la lupa para buscar</p>
+                            </div>
+
+                            <div class="border-t border-b dark:border-slate-700 py-4">
+                                <label class="block text-xs uppercase font-bold text-gray-500 dark:text-gray-400 mb-1">Total (Pesos)</label>
+                                <div class="text-4xl font-bold text-blue-700 dark:text-blue-500" id="v-total-pantalla">$0.00</div>
+                            </div>
+
+                            <div class="flex gap-2 pt-4">
+                                <button onclick="cambiarSeccion('seccionVentas')" class="bg-gray-300 hover:bg-gray-400 text-white font-bold py-2 px-6 rounded-xl shadow-lg">
+                                    Volver
+                                </button>
+                                <button onclick="abrirModalPago()" class="btn-primary">
+                                    Crear
+                                </button>
+                            </div>
+                        </aside>
+
+                        <section class="col-span-12 lg:col-span-9 space-y-6">
+                            
+                            <div class="card card-compact card-bordered">
+                                <label class="block text-xs uppercase font-bold text-gray-500 dark:text-gray-400 mb-2">Observaciones</label>
+                                <textarea id="v-observaciones" rows="2" class="form-textarea" placeholder="Opcional..."></textarea>
+                            </div>
+
+                            <div class="card card-bordered table-responsive">
+                                <table class="table-base min-w-[700px] text-left">
+                                    <thead class="bg-gray-50 dark:bg-slate-700/50 text-xs uppercase text-gray-500 dark:text-gray-300">
+                                        <tr>
+                                            <th class="p-4 text-center">Código</th>
+                                            <th class="p-4 text-center">Descripción</th>
+                                            <th class="p-4 text-right">Precio</th>
+                                            <th class="p-4 text-center">Cantidad (0)</th>
+                                            <th class="p-4 text-right">Total</th>
+                                            <th class="p-4 text-center">Acciones</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="v-items-body">
+                                        <tr id="v-items-vacio">
+                                            <td colspan="6" class="text-center py-12 text-gray-400 dark:text-slate-600 italic">
+                                                No hay datos cargados en la venta actual.
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </section>
+                    </div>
+                </div>
+
+                <!-- SECCION CONTRATOS (Oculta por defecto) -->
+                <div id="seccionContratos" class="hidden">
+                    <header class="mb-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                        <div>
+                            <h1 class="text-2xl font-bold text-gray-800 dark:text-white">Contratos</h1>
+                        </div>
+                        <button id="btn-nuevo-contrato" onclick="cambiarSeccion('pantallaGenerarContrato')" class="w-full md:w-auto btn-primary">
+                            + Nuevo Contrato
+                        </button>
+                    </header>
+                    <div class="flex flex-col sm:flex-row sm:items-center gap-3">
+                        <input type="text" id="buscarContrato" placeholder="Buscar por N° Contrato o Cliente..." class="form-input">
+                        <label class="mb-6 inline-flex items-center gap-3 cursor-pointer text-sm font-medium text-slate-700 dark:text-slate-200">
+                            <span class="relative inline-flex items-center">
+                                <input type="checkbox" id="toggleContratosFinalizados" class="sr-only peer">
+                                <span class="w-11 height h-6 bg-slate-200 dark:bg-slate-700 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></span>
+                            </span>
+                            <span>Ocultar Finalizados</span>
+                        </label>
+                    </div>                  
+                    <div class="bg-white/90 dark:bg-slate-900/90 rounded-2xl shadow-lg shadow-slate-900/5 border border-slate-200 dark:border-cyan-400/10 backdrop-blur overflow-x-auto">
+                        <table class="w-full min-w-[760px] text-left border-collapse">
+                            <thead>
+                                <tr class="bg-gray-50 dark:bg-slate-700 text-xs uppercase">
+                                    <th class="p-4 text-center">N° Contrato</th>
+                                    <th class="p-4">Fecha</th>
+                                    <th class="p-4 text-center">Cliente</th>
+                                    <th class="p-4 text-center">Estado</th>
+                                    <th class="p-4 text-center">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="cuerpo-tabla-contratos"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <!-- PANTALLA GENERAR CONTRATOS -->
+                <div id="pantallaGenerarContrato" class="hidden min-h-screen bg-gray-50 dark:bg-slate-900">
+                    <header class="bg-gray-800 text-white p-4 shadow-lg flex justify-between items-center">
+                        <h2 class="text-xl font-bold">NUEVO CONTRATO DE PRE-VENTA</h2>
                         <span id="reloj-venta" class="text-lg text-gray-400"></span>
                     </header>
                     <div class="grid grid-cols-12 gap-4 md:gap-6 p-4 md:p-6">

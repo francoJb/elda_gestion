@@ -467,7 +467,38 @@ const configurarTablas = async () => {
                 INDEX idx_auditoria_entidad (entidad, entidad_id)
             );
         `);
+        
+        await db.query(`
+            CREATE TABLE IF NOT EXISTS contratos (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                empresa_id INT NOT NULL,
+                cliente_id INT NOT NULL,
+                producto_id INT NOT NULL,
+                vehiculo_unidad_id INT NULL,
+                venta_id INT NULL,
+                fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+                precio_pactado DECIMAL(12,2) NOT NULL,
+                entrega_inicial DECIMAL(12,2) DEFAULT 0,
+                saldo_pendiente DECIMAL(12,2) DEFAULT 0,
+                cantidad_cuotas INT NULL,
+                monto_cuota DECIMAL(12,2) NULL,
+                estado ENUM('Activo', 'Adjudicado', 'Convertido', 'Anulado') DEFAULT 'Activo',
+                observaciones TEXT
+            );
+        `);
 
+        await db.query(`
+            CREATE TABLE IF NOT EXISTS contrato_pagos (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                empresa_id INT NOT NULL,
+                contrato_id INT NOT NULL,
+                cliente_id INT NOT NULL,
+                fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+                monto DECIMAL(12,2) NOT NULL,
+                observaciones TEXT
+            );
+        `);
+        
         // Si ya está inicializado, evitamos hacer docenas de consultas pesadas de columnas
         if (!yaInicializado) {
             console.log("⚙️ Ejecutando escaneo estructural detallado de columnas...");
