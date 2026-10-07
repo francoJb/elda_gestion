@@ -345,27 +345,52 @@ window.abrirModalPago = () => {
     document.getElementById("modalPago").classList.remove("hidden");
 };
 
-window.abrirModalPlanAhorro = () => {
-    if (!window.clienteSeleccionadoVenta) {
-        mostrarAlerta('Elegí un cliente registrado con la lupa.', 'Falta el cliente', 'warning');
-        return;
+window.abrirModalPlanAhorro = async () => {
+    try {
+        const [clientes, productos] = await Promise.all([
+            fetchClientes(),
+            fetchProductos()
+        ]);
+
+        const clienteSelect = document.getElementById('planAhorroCliente');
+        const modeloSelect = document.getElementById('planAhorroModelo');
+
+        clienteSelect.replaceChildren();
+        modeloSelect.replaceChildren();
+
+        for (const cliente of clientes) {
+            const opcion = document.createElement('option');
+            opcion.value = cliente.id;
+            opcion.textContent = `${cliente.nombre} ${cliente.apellido}`;
+            clienteSelect.appendChild(opcion);
+        }
+
+        const motos = productos.filter(esProductoVehiculo);
+
+        for (const moto of motos) {
+            const opcion = document.createElement('option');
+            opcion.value = moto.id;
+            opcion.textContent = `${moto.descripcion} (${moto.sku})`;
+            modeloSelect.appendChild(opcion);
+        }
+
+        if (clientes.length === 0 || motos.length === 0) {
+            mostrarAlerta(
+                clientes.length === 0
+                    ? 'Primero registrá un cliente.'
+                    : 'No hay modelos configurados como vehículos.',
+                'No se puede crear el plan',
+                'warning'
+            );
+            return;
+        }
+
+        document.getElementById('planAhorroAnticipo').value = '0';
+        document.getElementById('planAhorroMedioPago').value = 'Efectivo';
+        document.getElementById('modalPlanAhorro').classList.remove('hidden');
+    } catch (error) {
+        mostrarAlerta(error.message, 'Error al abrir el plan', 'error');
     }
-
-    if (carritoVenta.length !== 1 || !carritoVenta[0].esVehiculo || carritoVenta[0].cantidad !== 1) {
-        mostrarAlerta(
-            'Para crear un plan, cargá un solo modelo de moto en la pantalla.',
-            'Revisá los productos',
-            'warning'
-        );
-        return;
-    }
-
-    document.getElementById('planAhorroProducto').textContent =
-        `Modelo solicitado: ${carritoVenta[0].descripcion}`;
-
-    document.getElementById('planAhorroAnticipo').value = '0';
-    document.getElementById('planAhorroMedioPago').value = 'Efectivo';
-    document.getElementById('modalPlanAhorro').classList.remove('hidden');
 };
 
 window.guardarPlanAhorro = async () => {
@@ -385,8 +410,8 @@ window.guardarPlanAhorro = async () => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                cliente_id: window.clienteSeleccionadoVenta,
-                producto_id: carritoVenta[0].id,
+                cliente_id: Number(document.getElementById('planAhorroCliente').value),
+                producto_id: Number(document.getElementById('planAhorroModelo').value),
                 anticipo_inicial: anticipo,
                 medio_pago: document.getElementById('planAhorroMedioPago').value,
                 observaciones: document.getElementById('v-observaciones').value
@@ -400,14 +425,11 @@ window.guardarPlanAhorro = async () => {
         }
 
         document.getElementById('modalPlanAhorro').classList.add('hidden');
-        carritoVenta = [];
         document.getElementById('v-observaciones').value = '';
-        document.getElementById('v-cliente-input').value = 'Consumidor Final';
-        window.clienteSeleccionadoVenta = null;
-        actualizarTablaVenta(carritoVenta);
-
         boton.disabled = false;
         boton.textContent = 'Guardar plan';
+
+        await window.abrirHistorialPlanesAhorro();
 
         if (resultado.comprobante) {
             const imprimir = await mostrarConfirmacion({
@@ -447,6 +469,12 @@ window.guardarPlanAhorro = async () => {
         boton.textContent = 'Guardar plan';
     }
 };
+
+window.abrirSeccionPlanesAhorro = async () => {
+    cambiarSeccion('seccionPlanesAhorro');
+    await window.abrirHistorialPlanesAhorro();
+};
+
 window.abrirHistorialPlanesAhorro = async () => {
     try {
         const respuesta = await apiFetch(`${URL_PLANES_AHORRO}/historial`);
@@ -457,9 +485,7 @@ window.abrirHistorialPlanesAhorro = async () => {
         }
 
         historialPlanesAhorroCache = datos;
-        document.getElementById('filtroHistorialPlanes').value = '';
         renderizarHistorialPlanesAhorro(datos);
-        document.getElementById('modalHistorialPlanesAhorro').classList.remove('hidden');
     } catch (error) {
         mostrarAlerta(error.message, 'Error al cargar historial', 'error');
     }
@@ -491,7 +517,7 @@ function renderizarHistorialPlanesAhorro(planes) {
     if (planes.length === 0) {
         const fila = document.createElement('tr');
         const celda = document.createElement('td');
-        celda.colSpan = 8;
+        celda.colSpan = 9;
         celda.className = 'p-4 text-center text-gray-500';
         celda.textContent = 'No hay planes que coincidan con la búsqueda.';
         fila.appendChild(celda);
@@ -526,145 +552,38 @@ function renderizarHistorialPlanesAhorro(planes) {
             fila.appendChild(celda);
         });
 
+        const celdaAcciones = document.createElement('td');
+        celdaAcciones.className = 'p-3 whitespace-nowrap';
+
+        if (plan.estado === 'Activo') {
+            const acciones = [
+                ['💰', 'Registrar anticipo', 'anticipo'],
+                ['↩️', 'Devolver / cancelar', 'devolucion'],
+                ['🏍️', 'Adjudicar moto', 'adjudicar']
+            ];
+
+            for (const [emoji, titulo, accion] of acciones) {
+                const boton = document.createElement('button');
+                boton.type = 'button';
+                boton.textContent = emoji;
+                boton.title = titulo;
+                boton.setAttribute('aria-label', titulo);
+                boton.className = 'text-blue-500 hover:scale-150 transition-transform mr-2';
+                boton.addEventListener('click', () => {
+                    window.abrirAccionPlanAhorro(plan.plan_id, accion);
+                });
+                celdaAcciones.appendChild(boton);
+            }
+        } else {
+            celdaAcciones.textContent = '—';
+        }
+
+        fila.appendChild(celdaAcciones);
+
         tbody.appendChild(fila);
     }
 }
 
-window.abrirPlanesAhorro = async () => {
-    try {
-        const respuesta = await apiFetch(URL_PLANES_AHORRO);
-
-        if (!respuesta.ok) {
-            const resultado = await respuesta.json();
-            throw new Error(resultado.error || 'No se pudieron cargar los planes.');
-        }
-
-        planesAhorroCache = await respuesta.json();
-        planAhorroSeleccionado = null;
-
-        document.getElementById('btnSeleccionarPlanAhorro').textContent =
-            'Seleccionar un plan';
-        document.getElementById('anticipoPlanSaldo').textContent = '';
-        document.getElementById('anticipoPlanImporte').value = '';
-        document.getElementById('anticipoPlanMedioPago').value = 'Efectivo';
-        document.getElementById('anticipoPlanObservaciones').value = '';
-
-        const hayPlanes = planesAhorroCache.length > 0;
-        document.getElementById('btnGuardarAnticipoPlan').disabled = !hayPlanes;
-        document.getElementById('btnAbrirAdjudicacion').disabled = !hayPlanes;
-
-        document.getElementById('modalAnticipoPlan').classList.remove('hidden');
-
-        if (!hayPlanes) {
-            mostrarAlerta('No hay planes de ahorro activos.', 'Sin planes activos', 'info');
-        }
-    } catch (error) {
-        mostrarAlerta(error.message, 'Error al cargar planes', 'error');
-    }
-};
-
-window.abrirSelectorPlanesAhorro = () => {
-    const filtro = document.getElementById('inputFiltroPlanesAhorro');
-    filtro.value = '';
-    renderizarPlanesAhorro(planesAhorroCache);
-    document.getElementById('modalBuscadorPlanesAhorro').classList.remove('hidden');
-    filtro.focus();
-};
-
-window.cerrarSelectorPlanesAhorro = () => {
-    document.getElementById('modalBuscadorPlanesAhorro').classList.add('hidden');
-};
-
-window.filtrarPlanesAhorro = () => {
-    const texto = document
-        .getElementById('inputFiltroPlanesAhorro')
-        .value
-        .trim()
-        .toLowerCase();
-
-    const filtrados = planesAhorroCache.filter(plan => {
-        const contenido = [
-            plan.plan_id,
-            plan.cliente,
-            plan.producto
-        ].join(' ').toLowerCase();
-
-        return contenido.includes(texto);
-    });
-
-    renderizarPlanesAhorro(filtrados);
-};
-
-function renderizarPlanesAhorro(planes) {
-    const tbody = document.getElementById('tablaBuscadorPlanesAhorro');
-    tbody.replaceChildren();
-
-    if (planes.length === 0) {
-        const fila = document.createElement('tr');
-        const celda = document.createElement('td');
-
-        celda.colSpan = 4;
-        celda.className = 'p-4 text-center text-gray-500';
-        celda.textContent = 'No se encontraron planes activos.';
-        fila.appendChild(celda);
-        tbody.appendChild(fila);
-        return;
-    }
-
-    for (const plan of planes) {
-        const fila = document.createElement('tr');
-        fila.className =
-            'border-b dark:border-slate-700 hover:bg-blue-50 ' +
-            'dark:hover:bg-blue-900/20 transition-colors cursor-pointer';
-
-        const saldo = Number(plan.saldo_a_favor || 0);
-
-        const datos = [
-            `#${plan.plan_id}`,
-            plan.cliente || '',
-            plan.producto || '',
-            `$${saldo.toFixed(2)}`
-        ];
-
-        for (const [indice, texto] of datos.entries()) {
-            const celda = document.createElement('td');
-            celda.className = indice === 3
-                ? 'p-3 text-right'
-                : 'p-3';
-
-            celda.textContent = texto;
-            fila.appendChild(celda);
-        }
-
-        fila.addEventListener('click', () => seleccionarPlanAhorro(plan.plan_id));
-        tbody.appendChild(fila);
-    }
-}
-
-function seleccionarPlanAhorro(planId) {
-    planAhorroSeleccionado = planesAhorroCache.find(
-        plan => String(plan.plan_id) === String(planId)
-    );
-
-    if (!planAhorroSeleccionado) {
-        mostrarAlerta('No se encontró el plan seleccionado.', 'Error', 'error');
-        return;
-    }
-
-    const saldo = Number(planAhorroSeleccionado.saldo_a_favor || 0);
-
-    document.getElementById('btnSeleccionarPlanAhorro').textContent =
-        `Plan #${planAhorroSeleccionado.plan_id} — ` +
-        `${planAhorroSeleccionado.cliente} — ${planAhorroSeleccionado.producto}`;
-
-    document.getElementById('anticipoPlanSaldo').textContent =
-        `Anticipos acumulados: $${saldo.toFixed(2)}`;
-
-    document.getElementById('btnGuardarAnticipoPlan').disabled = false;
-    document.getElementById('btnAbrirAdjudicacion').disabled = false;
-
-    window.cerrarSelectorPlanesAhorro();
-}
 
 window.abrirAdjudicacionPlan = async () => {
     const plan = planAhorroSeleccionado;
@@ -830,6 +749,8 @@ window.confirmarDevolucionPlan = async () => {
             throw new Error(resultado.error || 'No se pudo registrar la devolución.');
         }
 
+        await window.abrirHistorialPlanesAhorro();
+
         document.getElementById('modalDevolucionPlan').classList.add('hidden');
 
         if (resultado.comprobante) {
@@ -926,7 +847,8 @@ window.confirmarAdjudicacionPlan = async () => {
         if (!respuesta.ok) {
             throw new Error(resultado.error || 'No se pudo adjudicar el plan.');
         }
-
+        
+        await window.abrirHistorialPlanesAhorro();
         document.getElementById('modalAdjudicarPlan').classList.add('hidden');
 
         let mensaje =
@@ -1027,6 +949,52 @@ window.guardarAnticipoPlan = async () => {
     } finally {
         boton.disabled = false;
         boton.textContent = 'Guardar anticipo';
+    }
+};
+
+async function cargarPlanActivoParaAccion(planId) {
+    const respuesta = await apiFetch(URL_PLANES_AHORRO);
+    const planes = await respuesta.json();
+
+    if (!respuesta.ok) {
+        throw new Error(planes.error || 'No se pudieron cargar los planes activos.');
+    }
+
+    const plan = planes.find(item => String(item.plan_id) === String(planId));
+
+    if (!plan) {
+        throw new Error('El plan ya no está activo o no se encontró.');
+    }
+
+    planAhorroSeleccionado = plan;
+    return plan;
+}
+
+window.abrirAccionPlanAhorro = async (planId, accion) => {
+    try {
+        const plan = await cargarPlanActivoParaAccion(planId);
+
+        if (accion === 'anticipo') {
+            document.getElementById('anticipoPlanSaldo').textContent =
+                `Anticipos acumulados: $${Number(plan.saldo_a_favor || 0).toFixed(2)}`;
+            document.getElementById('anticipoPlanImporte').value = '';
+            document.getElementById('anticipoPlanMedioPago').value = 'Efectivo';
+            document.getElementById('anticipoPlanObservaciones').value = '';
+            document.getElementById('btnGuardarAnticipoPlan').disabled = false;
+            document.getElementById('modalAnticipoPlan').classList.remove('hidden');
+            return;
+        }
+
+        if (accion === 'devolucion') {
+            window.abrirDevolucionPlan();
+            return;
+        }
+
+        if (accion === 'adjudicar') {
+            await window.abrirAdjudicacionPlan();
+        }
+    } catch (error) {
+        mostrarAlerta(error.message, 'Error al abrir la acción', 'error');
     }
 };
 

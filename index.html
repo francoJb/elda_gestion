@@ -429,11 +429,7 @@
                         <div>
                             <h1 class="text-2xl font-bold text-gray-800 dark:text-white">Ventas</h1>
                         </div>
-                        <button type="button" onclick="abrirHistorialPlanesAhorro()" class="w-full md:w-auto btn-secondary">
-                            Historial de planes
-                        </button>
-                        <button
-                            type="button" onclick="abrirPlanesAhorro()" class="w-full md:w-auto btn-secondary">
+                        <button type="button" onclick="abrirSeccionPlanesAhorro()" class="w-full md:w-auto btn-secondary">
                             Planes de ahorro
                         </button>
                         <button id="btn-nueva-venta" onclick="cambiarSeccion('pantallaGenerarVenta')" class="w-full md:w-auto btn-primary">
@@ -467,13 +463,44 @@
                         </table>
                     </div>
                 </div>
+                <!-- SECCION PLANES DE AHORRO (Oculta por defecto) -->
+                <div id="seccionPlanesAhorro" class="hidden">
+                    <header class="mb-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                        <div>
+                            <h1 class="text-2xl font-bold text-gray-800 dark:text-white">Planes de ahorro</h1>
+                            <p class="text-sm text-gray-500">Historial, anticipos y estado de cada plan.</p>
+                        </div>
+                        <div class="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+                            <button type="button" onclick="abrirModalPlanAhorro()" class="btn-primary">
+                                Nuevo plan de ahorro
+                            </button>
+                        </div>
+                    </header>
+                    <input id="filtroHistorialPlanes" type="search" oninput="filtrarHistorialPlanesAhorro()" placeholder="Buscar por plan, cliente, modelo o estado" class="form-input mb-4">
+                    <div class="card table-responsive">
+                        <table class="table-base min-w-[1100px]">
+                            <thead class="table-head">
+                                <tr>
+                                    <th class="p-3">Plan</th>
+                                    <th class="p-3">Cliente</th>
+                                    <th class="p-3">Modelo</th>
+                                    <th class="p-3">Estado</th>
+                                    <th class="p-3 text-right">Recibido</th>
+                                    <th class="p-3 text-right">Devuelto</th>
+                                    <th class="p-3 text-right">Aplicado</th>
+                                    <th class="p-3 text-right">Disponible</th>
+                                    <th class="p-3">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tablaHistorialPlanesAhorro"></tbody>
+                        </table>
+                    </div>
+                </div>
+
                 <!-- PANTALLA GENERAR VENTA -->
                 <div id="pantallaGenerarVenta" class="hidden min-h-screen bg-gray-50 dark:bg-slate-900">
                     <header class="bg-gray-800 text-white p-4 shadow-lg flex justify-between items-center">
                         <h2 class="text-xl font-bold">NUEVA VENTA</h2>
-                        <button type="button" onclick="abrirModalPlanAhorro()" class="btn-secondary">
-                            Plan de ahorro
-                        </button>
                         <span id="reloj-venta" class="text-lg text-gray-400"></span>
                     </header>
                     <div class="grid grid-cols-12 gap-4 md:gap-6 p-4 md:p-6">
@@ -1191,7 +1218,6 @@
         </div>
 
         <!-- Modal Plan de Ahorro -->
-
         <div id="modalPlanAhorro" class="modal-overlay hidden" style="z-index:120;">
             <div class="modal-card" style="max-width:32rem;">
                 <div class="bg-cyan-700 p-4 text-white">
@@ -1199,8 +1225,15 @@
                 </div>
 
                 <div class="p-6 space-y-4">
-                    <p id="planAhorroProducto" class="font-semibold"></p>
+                    <div>
+                        <label for="planAhorroCliente" class="block text-sm mb-1">Cliente</label>
+                        <select id="planAhorroCliente" class="form-input"></select>
+                    </div>
 
+                    <div>
+                        <label for="planAhorroModelo" class="block text-sm mb-1">Modelo de moto</label>
+                        <select id="planAhorroModelo" class="form-input"></select>
+                    </div>
                     <div>
                         <label for="planAhorroAnticipo" class="block text-sm mb-1">
                             Anticipo inicial (opcional)
@@ -1248,6 +1281,7 @@
             </div>
         </div>
 
+        <!-- Modal Anticipo de Plan -->
         <div id="modalAnticipoPlan" class="modal-overlay hidden" style="z-index:120;">
             <div class="modal-card" style="max-width:32rem;">
                 <div class="bg-cyan-700 p-4 text-white">
@@ -1256,12 +1290,6 @@
 
                 <div class="p-6 space-y-4">
                     <div>
-                        <label class="block text-sm mb-1">Plan activo</label>
-
-                        <button id="btnSeleccionarPlanAhorro" type="button" onclick="abrirSelectorPlanesAhorro()" class="form-input w-full text-left">
-                            Seleccionar un plan
-                        </button>
-
                         <p id="anticipoPlanSaldo" class="mt-2 text-sm font-semibold"></p>
                     </div>
 
@@ -1297,12 +1325,6 @@
                         </button>
                         <button id="btnGuardarAnticipoPlan" type="button" onclick="guardarAnticipoPlan()" class="btn-primary">
                             Guardar anticipo
-                        </button>
-                        <button id="btnAbrirDevolucionPlan" type="button" onclick="abrirDevolucionPlan()" class="btn-secondary">
-                            Devolver / cancelar plan
-                        </button>
-                        <button id="btnAbrirAdjudicacion" type="button" onclick="abrirAdjudicacionPlan()" class="btn-secondary">
-                            Adjudicar moto
                         </button>
                     </div>
                 </div>
@@ -1381,88 +1403,8 @@
                 </div>
             </div>
         </div>
-
-        <div id="modalBuscadorPlanesAhorro" class="modal-overlay hidden" style="z-index:130;">
-            <div class="modal-card">
-                <div class="modal-header">
-                    <h3 class="text-lg font-bold">Seleccionar plan de ahorro</h3>
-                    <button
-                        type="button"
-                        onclick="cerrarSelectorPlanesAhorro()"
-                        class="text-gray-500 hover:text-red-500 text-2xl"
-                    >
-                        &times;
-                    </button>
-                </div>
-
-                <div class="modal-body">
-                    <input
-                        type="text"
-                        id="inputFiltroPlanesAhorro"
-                        oninput="filtrarPlanesAhorro()"
-                        placeholder="Buscar por cliente, modelo o número de plan"
-                        class="modal-search"
-                    >
-                </div>
-
-                <div class="flex-1 overflow-y-auto p-4">
-                    <table class="table-base">
-                        <thead class="table-head">
-                            <tr>
-                                <th class="p-3">Plan</th>
-                                <th class="p-3">Cliente</th>
-                                <th class="p-3">Modelo</th>
-                                <th class="p-3 text-right">Anticipos</th>
-                            </tr>
-                        </thead>
-                        <tbody id="tablaBuscadorPlanesAhorro"></tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-        <div id="modalHistorialPlanesAhorro" class="modal-overlay hidden" style="z-index:130;">
-            <div class="modal-card">
-                <div class="modal-header">
-                    <h3 class="text-lg font-bold">Historial de planes de ahorro</h3>
-                    <button
-                        type="button"
-                        onclick="document.getElementById('modalHistorialPlanesAhorro').classList.add('hidden')"
-                        class="text-gray-500 hover:text-red-500 text-2xl"
-                    >
-                        &times;
-                    </button>
-                </div>
-
-                <div class="modal-body">
-                    <input
-                        id="filtroHistorialPlanes"
-                        type="text"
-                        oninput="filtrarHistorialPlanesAhorro()"
-                        placeholder="Buscar por plan, cliente, modelo o estado"
-                        class="modal-search"
-                    >
-                </div>
-
-                <div class="flex-1 overflow-y-auto p-4">
-                    <table class="table-base">
-                        <thead class="table-head">
-                            <tr>
-                                <th class="p-3">Plan</th>
-                                <th class="p-3">Cliente</th>
-                                <th class="p-3">Modelo</th>
-                                <th class="p-3">Estado</th>
-                                <th class="p-3 text-right">Recibido</th>
-                                <th class="p-3 text-right">Devuelto</th>
-                                <th class="p-3 text-right">Aplicado</th>
-                                <th class="p-3 text-right">Disponible</th>
-                            </tr>
-                        </thead>
-                        <tbody id="tablaHistorialPlanesAhorro"></tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-
+        
+        <!-- Modal Adjudicar Plan -->
         <div id="modalAdjudicarPlan" class="modal-overlay hidden" style="z-index:125;">
             <div class="modal-card" style="max-width:32rem;">
                 <div class="bg-blue-700 p-4 text-white">

@@ -34,6 +34,7 @@ const LINKS_POR_SECCION = {
     seccionProductos: "linkProductos",
     pantallaProducto: "linkProductos",
     seccionProveedores: "linkProveedores",
+    seccionPlanesAhorro: "linkVentas",
     seccionConfig: "linkConfig"
 };
 
@@ -64,6 +65,7 @@ export const cambiarSeccion = (idSeccionDestino) => {
         "seccionProductos", 
         "seccionClientes", 
         "seccionVentas",
+        "seccionPlanesAhorro",
         "seccionProveedores",
         "seccionConfig",
         "pantallaGenerarVenta",
