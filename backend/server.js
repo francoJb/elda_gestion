@@ -10,6 +10,8 @@ if (!fs.existsSync(path.resolve(__dirname, `../.env.${process.env.NODE_ENV || 'l
   require('dotenv').config({ path: path.resolve(__dirname, '../.env.local') });
 }
 
+const planesAhorroRoutes = require('./routes/planesAhorroRoutes');
+
 const cors = require('cors');
 const express = require('express');
 const app = express();
@@ -58,6 +60,7 @@ app.use('/api/ventas', ventasRoutes);
 app.use('/api/productos', productosRoutes);
 app.use('/api/proveedores', proveedoresRoutes);
 app.use('/api/clientes', clientesRoutes);
+app.use('/api/planes-ahorro', planesAhorroRoutes);
 
 const PORT = Number(process.env.PORT) || 3000;
 db.ready

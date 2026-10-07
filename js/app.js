@@ -14,6 +14,22 @@ import { apiFetch } from "./apiClient.js";
 
 
 const URL_API_VENTAS = `${API_BASE_URL}/api/ventas`;
+const URL_API_PLANES_AHORRO = `${API_BASE_URL}/api/planes-ahorro`;
+
+async function obtenerPlanesAhorroActivos() {
+    const respuesta = await apiFetch(URL_API_PLANES_AHORRO);
+    const datos = await respuesta.json();
+
+    if (!respuesta.ok) {
+        throw new Error(datos.error || 'No se pudieron cargar los planes de ahorro.');
+    }
+
+    if (!Array.isArray(datos)) {
+        throw new Error('La respuesta de planes de ahorro no tiene el formato esperado.');
+    }
+
+    return datos;
+}
 let chartVentasDashboard = null;
 let currentSessionUser = null;
 let editingCompanyId = null;
@@ -416,10 +432,11 @@ async function renderDashboard() {
     mostrarLoader();
 
     try {
-        const [clientes, productos, ventas] = await Promise.all([
+        const [clientes, productos, ventas, planesAhorro] = await Promise.all([
             fetchClientes(),
             fetchProductos(),
-            obtenerHistorialVentas()
+            obtenerHistorialVentas(),
+            obtenerPlanesAhorroActivos()
         ]);
 
         const ahora = new Date();
@@ -435,6 +452,7 @@ async function renderDashboard() {
 
         const totalMes = ventasMes.reduce((sum, v) => sum + Number(v.total || 0), 0);
         const saldoPendiente = ventasValidas.reduce((sum, v) => sum + Number(v.saldo_pendiente || 0), 0);
+        const anticiposPlanesActivos = planesAhorro.reduce((total, plan) => total + Number(plan.saldo_a_favor || 0), 0);
         const nuevosClientes = clientes.filter(c => {
             const fecha = fechaValida(c.fecha_alta);
             return fecha && fecha >= hace30Dias && fecha <= ahora;
@@ -446,7 +464,8 @@ async function renderDashboard() {
         document.getElementById("dashboardClientesNuevos").innerText = nuevosClientes;
         document.getElementById("dashboardProductosStockBajo").innerText = stockBajo;
         document.getElementById("dashboardLowStockList").innerHTML = generarListaStockBajo(productos);
-
+        document.getElementById('dashboardPlanesActivos').innerText = planesAhorro.length;
+        document.getElementById('dashboardAnticiposPlanes').innerText = formatMoney(anticiposPlanesActivos);
         const ultimas5 = ventasValidas.slice(0, 5);
         document.getElementById("dashboardUltimasVentasBody").innerHTML = ultimas5.map(v => {
             const fecha = fechaValida(v.fecha);

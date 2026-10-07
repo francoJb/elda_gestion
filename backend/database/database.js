@@ -166,8 +166,7 @@ async function asegurarColumnasMultiempresa() {
 async function asegurarEsquemaCuotas() {
     await db.query(`
         ALTER TABLE ventas
-        MODIFY metodo_pago ENUM('Efectivo','Transferencia','Tarjeta','QR','Cuenta Corriente','Cuotas') NOT NULL
-    `);
+            MODIFY metodo_pago ENUM('Efectivo','Transferencia','Tarjeta','QR','Cuenta Corriente','Cuotas','Anticipos') NOT NULL    `);
 
     await db.query(`
         CREATE TABLE IF NOT EXISTS venta_cuotas (

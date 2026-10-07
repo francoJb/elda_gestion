@@ -2,11 +2,14 @@ import { fetchClientes, cargarDatosBalance } from "./clientes.js";
 import { fetchProductos } from "./productos.js";
 import { actualizarTablaVenta, renderTablaVentas } from "./renderventas.js";
 import { cambiarSeccion, mostrarAlerta, mostrarConfirmacion } from "./ui.js";
-import { load } from "./storage.js";
 import { API_BASE_URL } from "./config.js";
 import { apiFetch } from "./apiClient.js";
 
 const URL_API = `${API_BASE_URL}/api/ventas`;
+const URL_PLANES_AHORRO = `${API_BASE_URL}/api/planes-ahorro`;
+let planesAhorroCache = [];
+let planAhorroSeleccionado = null;
+let historialPlanesAhorroCache = [];
 const PUNTO_VENTA_DEFAULT = "0001";
 
 
@@ -340,6 +343,691 @@ window.abrirModalPago = () => {
     toggleCamposCtaCte();
 
     document.getElementById("modalPago").classList.remove("hidden");
+};
+
+window.abrirModalPlanAhorro = () => {
+    if (!window.clienteSeleccionadoVenta) {
+        mostrarAlerta('Elegí un cliente registrado con la lupa.', 'Falta el cliente', 'warning');
+        return;
+    }
+
+    if (carritoVenta.length !== 1 || !carritoVenta[0].esVehiculo || carritoVenta[0].cantidad !== 1) {
+        mostrarAlerta(
+            'Para crear un plan, cargá un solo modelo de moto en la pantalla.',
+            'Revisá los productos',
+            'warning'
+        );
+        return;
+    }
+
+    document.getElementById('planAhorroProducto').textContent =
+        `Modelo solicitado: ${carritoVenta[0].descripcion}`;
+
+    document.getElementById('planAhorroAnticipo').value = '0';
+    document.getElementById('planAhorroMedioPago').value = 'Efectivo';
+    document.getElementById('modalPlanAhorro').classList.remove('hidden');
+};
+
+window.guardarPlanAhorro = async () => {
+    const boton = document.getElementById('btnGuardarPlanAhorro');
+    const anticipo = Number(document.getElementById('planAhorroAnticipo').value || 0);
+
+    if (!Number.isFinite(anticipo) || anticipo < 0) {
+        mostrarAlerta('El anticipo no puede ser negativo.', 'Importe inválido', 'warning');
+        return;
+    }
+
+    boton.disabled = true;
+    boton.textContent = 'Guardando...';
+
+    try {
+        const respuesta = await apiFetch(`${API_BASE_URL}/api/planes-ahorro`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                cliente_id: window.clienteSeleccionadoVenta,
+                producto_id: carritoVenta[0].id,
+                anticipo_inicial: anticipo,
+                medio_pago: document.getElementById('planAhorroMedioPago').value,
+                observaciones: document.getElementById('v-observaciones').value
+            })
+        });
+
+        const resultado = await respuesta.json();
+
+        if (!respuesta.ok) {
+            throw new Error(resultado.error || 'No se pudo guardar el plan.');
+        }
+
+        document.getElementById('modalPlanAhorro').classList.add('hidden');
+        carritoVenta = [];
+        document.getElementById('v-observaciones').value = '';
+        document.getElementById('v-cliente-input').value = 'Consumidor Final';
+        window.clienteSeleccionadoVenta = null;
+        actualizarTablaVenta(carritoVenta);
+
+        boton.disabled = false;
+        boton.textContent = 'Guardar plan';
+
+        if (resultado.comprobante) {
+            const imprimir = await mostrarConfirmacion({
+                title: 'Imprimir comprobante de anticipo',
+                message: 'El plan se creó con un anticipo. ¿Querés abrir el comprobante?',
+                confirmText: 'Imprimir',
+                cancelText: 'No imprimir'
+            });
+
+            if (imprimir) {
+                try {
+                    const doc = await generarReciboAnticipoPDF(resultado.comprobante);
+                    abrirPreviewPDF(
+                        doc,
+                        `AnticipoPlan_${resultado.comprobante.plan_id}_${resultado.comprobante.anticipo_id}.pdf`
+                    );
+                } catch (error) {
+                    console.error('Error al generar el comprobante del anticipo:', error);
+                    await mostrarAlerta(
+                        'El plan y el anticipo se guardaron, pero no se pudo generar el comprobante.',
+                        'Error al imprimir',
+                        'error'
+                    );
+                }
+            }
+        }
+
+        await mostrarAlerta(
+            `Plan creado. Número ${resultado.plan_id}. Anticipo registrado: $${Number(resultado.saldo_a_favor).toFixed(2)}.`,
+            'Plan de ahorro creado',
+            'success'
+        );
+    } catch (error) {
+        mostrarAlerta(error.message, 'Error', 'error');
+    } finally {
+        boton.disabled = false;
+        boton.textContent = 'Guardar plan';
+    }
+};
+window.abrirHistorialPlanesAhorro = async () => {
+    try {
+        const respuesta = await apiFetch(`${URL_PLANES_AHORRO}/historial`);
+        const datos = await respuesta.json();
+
+        if (!respuesta.ok) {
+            throw new Error(datos.error || 'No se pudo cargar el historial.');
+        }
+
+        historialPlanesAhorroCache = datos;
+        document.getElementById('filtroHistorialPlanes').value = '';
+        renderizarHistorialPlanesAhorro(datos);
+        document.getElementById('modalHistorialPlanesAhorro').classList.remove('hidden');
+    } catch (error) {
+        mostrarAlerta(error.message, 'Error al cargar historial', 'error');
+    }
+};
+
+window.filtrarHistorialPlanesAhorro = () => {
+    const texto = document
+        .getElementById('filtroHistorialPlanes')
+        .value
+        .trim()
+        .toLowerCase();
+
+    const filtrados = historialPlanesAhorroCache.filter(plan =>
+        [
+            plan.plan_id,
+            plan.cliente,
+            plan.producto,
+            plan.estado
+        ].join(' ').toLowerCase().includes(texto)
+    );
+
+    renderizarHistorialPlanesAhorro(filtrados);
+};
+
+function renderizarHistorialPlanesAhorro(planes) {
+    const tbody = document.getElementById('tablaHistorialPlanesAhorro');
+    tbody.replaceChildren();
+
+    if (planes.length === 0) {
+        const fila = document.createElement('tr');
+        const celda = document.createElement('td');
+        celda.colSpan = 8;
+        celda.className = 'p-4 text-center text-gray-500';
+        celda.textContent = 'No hay planes que coincidan con la búsqueda.';
+        fila.appendChild(celda);
+        tbody.appendChild(fila);
+        return;
+    }
+
+    const dinero = valor => Number(valor || 0).toLocaleString('es-AR', {
+        style: 'currency',
+        currency: 'ARS'
+    });
+
+    for (const plan of planes) {
+        const fila = document.createElement('tr');
+        fila.className = 'border-b dark:border-slate-700';
+
+        const valores = [
+            `#${plan.plan_id}`,
+            plan.cliente || '',
+            plan.producto || '',
+            plan.estado || '',
+            dinero(plan.total_recibido),
+            dinero(plan.total_devuelto),
+            dinero(plan.total_aplicado),
+            dinero(plan.saldo_disponible)
+        ];
+
+        valores.forEach((valor, indice) => {
+            const celda = document.createElement('td');
+            celda.className = indice >= 4 ? 'p-3 text-right' : 'p-3';
+            celda.textContent = valor;
+            fila.appendChild(celda);
+        });
+
+        tbody.appendChild(fila);
+    }
+}
+
+window.abrirPlanesAhorro = async () => {
+    try {
+        const respuesta = await apiFetch(URL_PLANES_AHORRO);
+
+        if (!respuesta.ok) {
+            const resultado = await respuesta.json();
+            throw new Error(resultado.error || 'No se pudieron cargar los planes.');
+        }
+
+        planesAhorroCache = await respuesta.json();
+        planAhorroSeleccionado = null;
+
+        document.getElementById('btnSeleccionarPlanAhorro').textContent =
+            'Seleccionar un plan';
+        document.getElementById('anticipoPlanSaldo').textContent = '';
+        document.getElementById('anticipoPlanImporte').value = '';
+        document.getElementById('anticipoPlanMedioPago').value = 'Efectivo';
+        document.getElementById('anticipoPlanObservaciones').value = '';
+
+        const hayPlanes = planesAhorroCache.length > 0;
+        document.getElementById('btnGuardarAnticipoPlan').disabled = !hayPlanes;
+        document.getElementById('btnAbrirAdjudicacion').disabled = !hayPlanes;
+
+        document.getElementById('modalAnticipoPlan').classList.remove('hidden');
+
+        if (!hayPlanes) {
+            mostrarAlerta('No hay planes de ahorro activos.', 'Sin planes activos', 'info');
+        }
+    } catch (error) {
+        mostrarAlerta(error.message, 'Error al cargar planes', 'error');
+    }
+};
+
+window.abrirSelectorPlanesAhorro = () => {
+    const filtro = document.getElementById('inputFiltroPlanesAhorro');
+    filtro.value = '';
+    renderizarPlanesAhorro(planesAhorroCache);
+    document.getElementById('modalBuscadorPlanesAhorro').classList.remove('hidden');
+    filtro.focus();
+};
+
+window.cerrarSelectorPlanesAhorro = () => {
+    document.getElementById('modalBuscadorPlanesAhorro').classList.add('hidden');
+};
+
+window.filtrarPlanesAhorro = () => {
+    const texto = document
+        .getElementById('inputFiltroPlanesAhorro')
+        .value
+        .trim()
+        .toLowerCase();
+
+    const filtrados = planesAhorroCache.filter(plan => {
+        const contenido = [
+            plan.plan_id,
+            plan.cliente,
+            plan.producto
+        ].join(' ').toLowerCase();
+
+        return contenido.includes(texto);
+    });
+
+    renderizarPlanesAhorro(filtrados);
+};
+
+function renderizarPlanesAhorro(planes) {
+    const tbody = document.getElementById('tablaBuscadorPlanesAhorro');
+    tbody.replaceChildren();
+
+    if (planes.length === 0) {
+        const fila = document.createElement('tr');
+        const celda = document.createElement('td');
+
+        celda.colSpan = 4;
+        celda.className = 'p-4 text-center text-gray-500';
+        celda.textContent = 'No se encontraron planes activos.';
+        fila.appendChild(celda);
+        tbody.appendChild(fila);
+        return;
+    }
+
+    for (const plan of planes) {
+        const fila = document.createElement('tr');
+        fila.className =
+            'border-b dark:border-slate-700 hover:bg-blue-50 ' +
+            'dark:hover:bg-blue-900/20 transition-colors cursor-pointer';
+
+        const saldo = Number(plan.saldo_a_favor || 0);
+
+        const datos = [
+            `#${plan.plan_id}`,
+            plan.cliente || '',
+            plan.producto || '',
+            `$${saldo.toFixed(2)}`
+        ];
+
+        for (const [indice, texto] of datos.entries()) {
+            const celda = document.createElement('td');
+            celda.className = indice === 3
+                ? 'p-3 text-right'
+                : 'p-3';
+
+            celda.textContent = texto;
+            fila.appendChild(celda);
+        }
+
+        fila.addEventListener('click', () => seleccionarPlanAhorro(plan.plan_id));
+        tbody.appendChild(fila);
+    }
+}
+
+function seleccionarPlanAhorro(planId) {
+    planAhorroSeleccionado = planesAhorroCache.find(
+        plan => String(plan.plan_id) === String(planId)
+    );
+
+    if (!planAhorroSeleccionado) {
+        mostrarAlerta('No se encontró el plan seleccionado.', 'Error', 'error');
+        return;
+    }
+
+    const saldo = Number(planAhorroSeleccionado.saldo_a_favor || 0);
+
+    document.getElementById('btnSeleccionarPlanAhorro').textContent =
+        `Plan #${planAhorroSeleccionado.plan_id} — ` +
+        `${planAhorroSeleccionado.cliente} — ${planAhorroSeleccionado.producto}`;
+
+    document.getElementById('anticipoPlanSaldo').textContent =
+        `Anticipos acumulados: $${saldo.toFixed(2)}`;
+
+    document.getElementById('btnGuardarAnticipoPlan').disabled = false;
+    document.getElementById('btnAbrirAdjudicacion').disabled = false;
+
+    window.cerrarSelectorPlanesAhorro();
+}
+
+window.abrirAdjudicacionPlan = async () => {
+    const plan = planAhorroSeleccionado;
+
+    if (!plan) {
+        mostrarAlerta('Seleccioná un plan activo.', 'Falta el plan', 'warning');
+        return;
+    }
+
+    const planId = plan.plan_id;
+    const productoId = plan.producto_id;
+    const unidadSelect = document.getElementById('adjudicarUnidad');
+    const botonAdjudicar = document.getElementById('btnConfirmarAdjudicacion');
+
+    try {
+        botonAdjudicar.disabled = true;
+        unidadSelect.replaceChildren();
+
+        const respuesta = await apiFetch(
+            `${API_BASE_URL}/api/productos/${productoId}/unidades-disponibles`
+        );
+
+        if (!respuesta.ok) {
+            throw new Error('No se pudieron cargar las unidades disponibles.');
+        }
+
+        const unidades = await respuesta.json();
+
+        if (unidades.length === 0) {
+            mostrarAlerta(
+                'No hay unidades físicas disponibles para este modelo. Registrá la moto con su chasis y motor antes de adjudicar.',
+                'Sin unidades disponibles',
+                'warning'
+            );
+            return;
+        }
+
+        for (const unidad of unidades) {
+            const opcion = document.createElement('option');
+            opcion.value = unidad.id;
+            opcion.textContent =
+                `Chasis ${unidad.chasis} — Motor ${unidad.motor}` +
+                `${unidad.color ? ` — ${unidad.color}` : ''}`;
+            unidadSelect.appendChild(opcion);
+        }
+
+        document.getElementById('adjudicarPlanResumen').textContent =
+        `Plan #${planId} — ${plan.cliente} — ${plan.producto}`
+
+        document.getElementById('adjudicarPrecioActual').textContent =
+            `Precio de referencia actual: $${Number(plan.precio_actual || 0).toFixed(2)}. El servidor lo verificará nuevamente al confirmar.`;
+
+        document.getElementById('adjudicarMetodoPago').value = 'Efectivo';
+        document.getElementById('adjudicarCamposCuotas').classList.add('hidden');
+
+        document.getElementById('modalAnticipoPlan').classList.add('hidden');
+        document.getElementById('modalAdjudicarPlan').classList.remove('hidden');
+    } catch (error) {
+        mostrarAlerta(error.message, 'Error al cargar unidades', 'error');
+    } finally {
+        botonAdjudicar.disabled = false;
+    }
+};
+
+document.getElementById('adjudicarMetodoPago').addEventListener('change', (event) => {
+    const camposCuotas = document.getElementById('adjudicarCamposCuotas');
+
+    if (event.target.value === 'Cuotas') {
+        camposCuotas.classList.remove('hidden');
+    } else {
+        camposCuotas.classList.add('hidden');
+    }
+});
+
+window.abrirDevolucionPlan = () => {
+    const plan = planAhorroSeleccionado;
+
+    if (!plan) {
+        mostrarAlerta('Seleccioná un plan activo.', 'Falta el plan', 'warning');
+        return;
+    }
+
+    const saldo = Number(plan.saldo_a_favor || 0);
+
+    document.getElementById('devolucionPlanResumen').textContent =
+        `Plan #${plan.plan_id} — ${plan.cliente} — ${plan.producto}`;
+
+    document.getElementById('devolucionPlanSaldo').textContent =
+        `Saldo disponible para devolver: $${saldo.toFixed(2)}`;
+
+    document.getElementById('devolucionPlanImporte').value = '';
+    document.getElementById('devolucionPlanImporte').max = saldo.toFixed(2);
+    document.getElementById('devolucionPlanImporte').disabled = false;
+    document.getElementById('devolucionPlanMedioPago').value = 'Efectivo';
+    document.getElementById('devolucionPlanObservaciones').value = '';
+    document.getElementById('devolucionCancelarPlan').checked = false;
+
+    document.getElementById('modalAnticipoPlan').classList.add('hidden');
+    document.getElementById('modalDevolucionPlan').classList.remove('hidden');
+};
+
+document.getElementById('devolucionCancelarPlan').addEventListener('change', event => {
+    const campoImporte = document.getElementById('devolucionPlanImporte');
+    const saldo = Number(planAhorroSeleccionado?.saldo_a_favor || 0);
+
+    if (event.target.checked) {
+        campoImporte.value = saldo.toFixed(2);
+        campoImporte.disabled = true;
+    } else {
+        campoImporte.value = '';
+        campoImporte.disabled = false;
+    }
+});
+
+window.confirmarDevolucionPlan = async () => {
+    const plan = planAhorroSeleccionado;
+
+    if (!plan) {
+        mostrarAlerta('Seleccioná un plan activo.', 'Falta el plan', 'warning');
+        return;
+    }
+
+    const boton = document.getElementById('btnConfirmarDevolucionPlan');
+    const importe = Number(document.getElementById('devolucionPlanImporte').value || 0);
+    const cancelarPlan = document.getElementById('devolucionCancelarPlan').checked;
+    const saldoDisponible = Number(plan.saldo_a_favor || 0);
+
+    if (importe < 0 || importe > saldoDisponible) {
+        mostrarAlerta(
+            'El importe debe estar entre cero y el saldo disponible del plan.',
+            'Importe inválido',
+            'warning'
+        );
+        return;
+    }
+
+    if (!cancelarPlan && importe <= 0) {
+        mostrarAlerta('La devolución debe ser mayor que cero.', 'Importe inválido', 'warning');
+        return;
+    }
+
+    boton.disabled = true;
+    boton.textContent = 'Procesando...';
+
+    try {
+        const respuesta = await apiFetch(
+            `${URL_PLANES_AHORRO}/${plan.plan_id}/devoluciones`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    importe,
+                    medio_pago: document.getElementById('devolucionPlanMedioPago').value,
+                    observaciones: document.getElementById('devolucionPlanObservaciones').value,
+                    cancelar_plan: cancelarPlan
+                })
+            }
+        );
+
+        const resultado = await respuesta.json();
+
+        if (!respuesta.ok) {
+            throw new Error(resultado.error || 'No se pudo registrar la devolución.');
+        }
+
+        document.getElementById('modalDevolucionPlan').classList.add('hidden');
+
+        if (resultado.comprobante) {
+            const imprimir = await mostrarConfirmacion({
+                title: 'Imprimir comprobante de devolución',
+                message: `Se registró la devolución del plan #${plan.plan_id}. ¿Querés abrir el comprobante?`,
+                confirmText: 'Imprimir',
+                cancelText: 'No imprimir'
+            });
+
+            if (imprimir) {
+                try {
+                    const doc = await generarReciboDevolucionPlanPDF(resultado.comprobante);
+                    abrirPreviewPDF(
+                        doc,
+                        `DevolucionPlan_${plan.plan_id}_${resultado.comprobante.devolucion_id}.pdf`
+                    );
+                } catch (error) {
+                    console.error('Error al generar el comprobante de devolución:', error);
+                    await mostrarAlerta(
+                        'La devolución se guardó, pero no se pudo generar el comprobante.',
+                        'Error al imprimir',
+                        'error'
+                    );
+                }
+            }
+        }
+
+        await mostrarAlerta(
+            resultado.mensaje,
+            cancelarPlan ? 'Plan cancelado' : 'Devolución registrada',
+            'success'
+        );
+
+    } catch (error) {
+        mostrarAlerta(error.message, 'Error en la devolución', 'error');
+    } finally {
+        boton.disabled = false;
+        boton.textContent = 'Confirmar devolución';
+    }
+};
+
+window.confirmarAdjudicacionPlan = async () => {
+    const planId = planAhorroSeleccionado?.plan_id;
+    const unidadId = document.getElementById('adjudicarUnidad').value;
+    const metodoPago = document.getElementById('adjudicarMetodoPago').value;
+    const boton = document.getElementById('btnConfirmarAdjudicacion');
+
+    if (!planId || !unidadId) {
+        mostrarAlerta('Seleccioná el plan y la unidad física.', 'Datos incompletos', 'warning');
+        return;
+    }
+
+    const datos = {
+        unidad_id: Number(unidadId),
+        metodo_pago: metodoPago
+    };
+
+    if (metodoPago === 'Cuotas') {
+        const cantidad = Number(document.getElementById('adjudicarCantidadCuotas').value);
+        const dia = Number(document.getElementById('adjudicarDiaVencimiento').value);
+
+        if (!Number.isInteger(cantidad) || cantidad <= 0) {
+            mostrarAlerta('La cantidad de cuotas debe ser mayor que cero.', 'Cuotas inválidas', 'warning');
+            return;
+        }
+
+        if (!Number.isInteger(dia) || dia < 1 || dia > 31) {
+            mostrarAlerta('El día de vencimiento debe estar entre 1 y 31.', 'Día inválido', 'warning');
+            return;
+        }
+
+        datos.cuotas = {
+            cantidad,
+            dia_vencimiento: dia
+        };
+    }
+
+    boton.disabled = true;
+    boton.textContent = 'Adjudicando...';
+
+    try {
+        const respuesta = await apiFetch(
+            `${URL_PLANES_AHORRO}/${planId}/adjudicar`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(datos)
+            }
+        );
+
+        const resultado = await respuesta.json();
+
+        if (!respuesta.ok) {
+            throw new Error(resultado.error || 'No se pudo adjudicar el plan.');
+        }
+
+        document.getElementById('modalAdjudicarPlan').classList.add('hidden');
+
+        let mensaje =
+            `Venta #${resultado.numero_venta} creada. ` +
+            `Precio: $${Number(resultado.precio_vigente).toFixed(2)}. ` +
+            `Anticipos aplicados: $${Number(resultado.anticipos_aplicados).toFixed(2)}.`;
+
+        if (Number(resultado.saldo_financiado) > 0) {
+            mensaje += ` Saldo financiado: $${Number(resultado.saldo_financiado).toFixed(2)}.`;
+        }
+
+        await mostrarAlerta(mensaje, 'Plan adjudicado', 'success');
+        await listarVentas();
+        if (typeof window.renderDashboard === 'function') {
+            await window.renderDashboard();
+        }
+    } catch (error) {
+        mostrarAlerta(error.message, 'Error al adjudicar', 'error');
+    } finally {
+        boton.disabled = false;
+        boton.textContent = 'Confirmar adjudicación';
+    }
+};
+
+window.guardarAnticipoPlan = async () => {
+    
+    const boton = document.getElementById('btnGuardarAnticipoPlan');
+    const planId = planAhorroSeleccionado?.plan_id;
+    const importe = Number(document.getElementById('anticipoPlanImporte').value);
+
+    if (!planId) {
+        mostrarAlerta('Seleccioná un plan activo.', 'Falta el plan', 'warning');
+        return;
+    }
+
+    if (!Number.isFinite(importe) || importe <= 0) {
+        mostrarAlerta('El importe debe ser mayor que cero.', 'Importe inválido', 'warning');
+        return;
+    }
+
+    boton.disabled = true;
+    boton.textContent = 'Guardando...';
+
+    try {
+        const respuesta = await apiFetch(`${URL_PLANES_AHORRO}/${planId}/anticipos`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                importe,
+                medio_pago: document.getElementById('anticipoPlanMedioPago').value,
+                observaciones: document.getElementById('anticipoPlanObservaciones').value
+            })
+        });
+
+        const resultado = await respuesta.json();
+
+        if (!respuesta.ok) {
+            throw new Error(resultado.error || 'No se pudo registrar el anticipo.');
+        }
+
+        document.getElementById('modalAnticipoPlan').classList.add('hidden');
+        boton.disabled = false;
+        boton.textContent = 'Guardar anticipo';
+
+        if (resultado.comprobante) {
+            const imprimir = await mostrarConfirmacion({
+                title: 'Imprimir comprobante de anticipo',
+                message: `Se registró el anticipo del plan #${planId}. ¿Querés abrir el comprobante?`,
+                confirmText: 'Imprimir',
+                cancelText: 'No imprimir'
+            });
+
+            if (imprimir) {
+                try {
+                    const doc = await generarReciboAnticipoPDF(resultado.comprobante);
+                    abrirPreviewPDF(
+                        doc,
+                        `AnticipoPlan_${planId}_${resultado.anticipo_id}.pdf`
+                    );
+                } catch (error) {
+                    console.error('Error al generar el comprobante del anticipo:', error);
+                    mostrarAlerta(
+                        'El anticipo se guardó, pero no se pudo generar el comprobante.',
+                        'Error al imprimir',
+                        'error'
+                    );
+                }
+            }
+        } else {
+            mostrarAlerta(
+                'El anticipo se guardó, pero el servidor no devolvió los datos del comprobante.',
+                'Anticipo registrado',
+                'warning'
+            );
+        }
+    } catch (error) {
+        mostrarAlerta(error.message, 'Error', 'error');
+    } finally {
+        boton.disabled = false;
+        boton.textContent = 'Guardar anticipo';
+    }
 };
 
 window.toggleCamposCtaCte = () => {
@@ -1294,6 +1982,160 @@ async function generarReciboPagoPDF(venta, montoPagado, nuevoSaldo, comprobantes
 
     doc.setFontSize(8);
     doc.text("Este recibo documenta el pago de la factura indicada y el saldo de la cuenta corriente.", pageWidth / 2, y, { align: "center" });
+
+    return doc;
+}
+async function generarReciboAnticipoPDF(anticipo) {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const margin = 20;
+    let y = margin;
+
+    const datosEmpresa = await obtenerDatosEmpresaActual();
+    const fecha = new Date(anticipo.fecha).toLocaleString('es-AR');
+    const importe = Number(anticipo.importe).toLocaleString('es-AR', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    });
+
+    doc.setFontSize(18);
+    doc.setFont('helvetica', 'bold');
+    doc.text('COMPROBANTE INTERNO DE ANTICIPO', pageWidth / 2, y, { align: 'center' });
+    y += 12;
+
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text(datosEmpresa.razonSocial, margin, y);
+    y += 5;
+    doc.text(`CUIT: ${datosEmpresa.cuit}`, margin, y);
+    y += 5;
+    doc.text(`Domicilio: ${datosEmpresa.domicilio}`, margin, y);
+    y += 10;
+
+    doc.text(`Anticipo interno N°: ${anticipo.anticipo_id}`, margin, y);
+    y += 5;
+    doc.text(`Fecha: ${fecha}`, margin, y);
+    y += 10;
+
+    doc.setFont('helvetica', 'bold');
+    doc.text('Cliente:', margin, y);
+    y += 5;
+
+    doc.setFont('helvetica', 'normal');
+    doc.text(anticipo.cliente || 'Sin nombre', margin, y);
+    y += 5;
+    doc.text(`DNI: ${anticipo.dni || 'No informado'}`, margin, y);
+    y += 5;
+    doc.text(`CUIT: ${anticipo.cuit || 'No informado'}`, margin, y);
+    y += 10;
+
+    doc.setFont('helvetica', 'bold');
+    doc.text('Detalle del pago:', margin, y);
+    y += 7;
+
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Plan de ahorro N°: ${anticipo.plan_id}`, margin, y);
+    y += 6;
+    doc.text(`Modelo solicitado: ${anticipo.producto || 'No informado'}`, margin, y);
+    y += 6;
+    doc.text(`Importe recibido: $${importe}`, margin, y);
+    y += 6;
+    doc.text(`Total acumulado del plan después de este pago: $${Number(anticipo.saldo_acumulado || 0).toFixed(2)}`, margin, y);
+    y += 6;
+    doc.text(`Medio de pago: ${anticipo.medio_pago}`, margin, y);
+    y += 12;
+
+    const aclaracion =
+        'Este pago se registra a cuenta del plan de ahorro. No constituye una venta ni congela el precio de la moto. El precio se determinará al momento de la adjudicación.';
+
+    const lineasAclaracion = doc.splitTextToSize(aclaracion, pageWidth - 2 * margin);
+    doc.setFontSize(9);
+    doc.text(lineasAclaracion, margin, y);
+
+    return doc;
+}
+
+async function generarReciboDevolucionPlanPDF(devolucion) {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const margin = 20;
+    let y = margin;
+
+    const empresa = await obtenerDatosEmpresaActual();
+    const fecha = new Date(devolucion.fecha).toLocaleString('es-AR');
+    const importe = Number(devolucion.importe_total).toLocaleString('es-AR', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    });
+
+    doc.setFontSize(18);
+    doc.setFont('helvetica', 'bold');
+    doc.text('COMPROBANTE INTERNO DE DEVOLUCIÓN', pageWidth / 2, y, {
+        align: 'center'
+    });
+    y += 12;
+
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text(empresa.razonSocial, margin, y);
+    y += 5;
+    doc.text(`CUIT: ${empresa.cuit}`, margin, y);
+    y += 5;
+    doc.text(`Domicilio: ${empresa.domicilio}`, margin, y);
+    y += 10;
+
+    doc.text(`Devolución interna N°: ${devolucion.devolucion_id}`, margin, y);
+    y += 5;
+    doc.text(`Fecha: ${fecha}`, margin, y);
+    y += 10;
+
+    doc.setFont('helvetica', 'bold');
+    doc.text('Cliente:', margin, y);
+    y += 5;
+
+    doc.setFont('helvetica', 'normal');
+    doc.text(devolucion.cliente || 'Sin nombre', margin, y);
+    y += 5;
+    doc.text(`DNI: ${devolucion.dni || 'No informado'}`, margin, y);
+    y += 10;
+
+    doc.setFont('helvetica', 'bold');
+    doc.text('Detalle:', margin, y);
+    y += 7;
+
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Plan de ahorro N°: ${devolucion.plan_id}`, margin, y);
+    y += 6;
+    doc.text(`Modelo: ${devolucion.producto || 'No informado'}`, margin, y);
+    y += 6;
+    doc.text(`Importe devuelto: $${importe}`, margin, y);
+    y += 6;
+    doc.text(`Medio de devolución: ${devolucion.medio_pago}`, margin, y);
+    y += 6;
+
+    if (Number(devolucion.cancela_plan) === 1) {
+        doc.text('El plan quedó cancelado.', margin, y);
+        y += 6;
+    }
+
+    y += 4;
+    doc.text('Observaciones:', margin, y);
+    y += 5;
+
+    const observaciones = devolucion.observaciones || 'Sin observaciones';
+    const lineas = doc.splitTextToSize(observaciones, pageWidth - 2 * margin);
+    doc.text(lineas, margin, y);
+
+    y += lineas.length * 5 + 10;
+    doc.setFontSize(8);
+    doc.text(
+        'Comprobante interno de devolución. No es un comprobante fiscal.',
+        pageWidth / 2,
+        y,
+        { align: 'center' }
+    );
 
     return doc;
 }

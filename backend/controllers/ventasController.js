@@ -396,6 +396,337 @@ exports.crearVenta = async (req, res) => {
     }
 };
 
+exports.adjudicarPlanAhorro = async (req, res) => {
+    const empresaId = req.empresaId;
+    const planId = Number(req.params.id);
+    const unidadId = Number(req.body.unidad_id);
+    const metodoSolicitado = req.body.metodo_pago;
+    const cantidadCuotas = Number(req.body.cuotas?.cantidad);
+    const diaVencimiento = Number(req.body.cuotas?.dia_vencimiento);
+
+    const metodosPagoInmediato = [
+        'Efectivo',
+        'Transferencia',
+        'Tarjeta',
+        'QR'
+    ];
+
+    if (!Number.isInteger(planId) || planId <= 0) {
+        return res.status(400).json({ error: 'El plan indicado no es válido.' });
+    }
+
+    if (!Number.isInteger(unidadId) || unidadId <= 0) {
+        return res.status(400).json({ error: 'Seleccioná una unidad física disponible.' });
+    }
+
+    if (
+        metodoSolicitado !== 'Cuotas' &&
+        !metodosPagoInmediato.includes(metodoSolicitado)
+    ) {
+        return res.status(400).json({ error: 'Seleccioná una forma de pago válida.' });
+    }
+
+    if (metodoSolicitado === 'Cuotas') {
+        if (!Number.isInteger(cantidadCuotas) || cantidadCuotas <= 0) {
+            return res.status(400).json({ error: 'La cantidad de cuotas debe ser mayor a cero.' });
+        }
+
+        if (!Number.isInteger(diaVencimiento) || diaVencimiento < 1 || diaVencimiento > 31) {
+            return res.status(400).json({ error: 'El día de vencimiento debe estar entre 1 y 31.' });
+        }
+    }
+
+    const connection = await db.getConnection();
+
+    try {
+        await connection.beginTransaction();
+
+        const [planes] = await connection.query(
+            `SELECT id, cliente_id, producto_id, estado, observaciones
+             FROM planes_ahorro
+             WHERE empresa_id = ? AND id = ?
+             FOR UPDATE`,
+            [empresaId, planId]
+        );
+
+        if (planes.length === 0) {
+            await connection.rollback();
+            return res.status(404).json({ error: 'No se encontró el plan.' });
+        }
+
+        const plan = planes[0];
+
+        if (plan.estado !== 'Activo') {
+            await connection.rollback();
+            return res.status(409).json({ error: 'El plan ya no está activo.' });
+        }
+
+        const [productos] = await connection.query(
+            `SELECT id, descripcion, precio_neto, stock, control_stock
+             FROM productos
+             WHERE empresa_id = ? AND id = ? AND estado = 1
+             FOR UPDATE`,
+            [empresaId, plan.producto_id]
+        );
+
+        if (productos.length === 0) {
+            await connection.rollback();
+            return res.status(404).json({ error: 'No se encontró el modelo de moto del plan.' });
+        }
+
+        const producto = productos[0];
+        const precioCentavos = Math.round(Number(producto.precio_neto) * 100);
+
+        if (!Number.isSafeInteger(precioCentavos) || precioCentavos <= 0) {
+            await connection.rollback();
+            return res.status(400).json({ error: 'El producto no tiene un precio vigente válido.' });
+        }
+
+        const [unidades] = await connection.query(
+            `SELECT id
+             FROM vehiculos_unidades
+             WHERE empresa_id = ?
+               AND producto_id = ?
+               AND id = ?
+               AND estado_venta = 'Disponible'
+               AND estado = 1
+             FOR UPDATE`,
+            [empresaId, plan.producto_id, unidadId]
+        );
+
+        if (unidades.length === 0) {
+            await connection.rollback();
+            return res.status(409).json({ error: 'La unidad no existe, no corresponde al modelo o ya no está disponible.' });
+        }
+
+        const [anticipos] = await connection.query(
+            `SELECT
+                ap.id,
+                ap.importe,
+                COALESCE(
+                    (
+                        SELECT SUM(d.importe)
+                        FROM anticipos_plan_devoluciones d
+                        WHERE d.empresa_id = ap.empresa_id
+                          AND d.anticipo_id = ap.id
+                    ),
+                    0
+                ) AS devuelto,
+                COALESCE(
+                    (
+                        SELECT SUM(a.importe)
+                        FROM anticipos_plan_aplicaciones a
+                        WHERE a.empresa_id = ap.empresa_id
+                          AND a.anticipo_id = ap.id
+                    ),
+                    0
+                ) AS aplicado
+             FROM anticipos_plan ap
+             WHERE ap.empresa_id = ?
+               AND ap.plan_id = ?
+               AND ap.estado = 'Confirmado'
+             ORDER BY ap.id
+             FOR UPDATE`,
+            [empresaId, planId]
+        );
+
+        const anticiposDisponibles = anticipos.map(anticipo => {
+            const recibido = Math.round(Number(anticipo.importe) * 100);
+            const devuelto = Math.round(Number(anticipo.devuelto) * 100);
+            const aplicado = Math.round(Number(anticipo.aplicado) * 100);
+
+            return {
+                id: anticipo.id,
+                disponibleCentavos: Math.max(0, recibido - devuelto - aplicado)
+            };
+        });
+
+        const totalAnticiposCentavos = anticiposDisponibles.reduce(
+            (total, anticipo) => total + anticipo.disponibleCentavos,
+            0
+        );
+
+        if (totalAnticiposCentavos > precioCentavos) {
+            await connection.rollback();
+            return res.status(409).json({
+                error: 'Los anticipos superan el precio vigente. Registrá primero la devolución del excedente.'
+            });
+        }
+
+        const saldoCentavos = precioCentavos - totalAnticiposCentavos;
+        const saldoFinanciado = redondear2(saldoCentavos / 100);
+        const esFinanciada = metodoSolicitado === 'Cuotas' && saldoCentavos > 0;
+        const metodoPago = saldoCentavos === 0
+            ? 'Anticipos'
+            : metodoSolicitado;
+
+        let cuotasGeneradas = [];
+
+        if (esFinanciada) {
+            cuotasGeneradas = generarCuotas(
+                saldoFinanciado,
+                cantidadCuotas,
+                diaVencimiento
+            );
+        }
+
+        const nuevoNumero = await obtenerSiguienteNumeroDocumento(
+            connection,
+            empresaId,
+            'factura'
+        );
+
+        const nuevoNumeroPlanPagos = esFinanciada
+            ? await obtenerSiguienteNumeroDocumento(connection, empresaId, 'plan_pagos')
+            : null;
+
+        const fechaArg = formatearFechaHoraArgentina(ahoraArgentinaDate());
+        const estadoPago = esFinanciada ? 'Pendiente' : 'Pagado';
+        const saldoPendiente = esFinanciada ? saldoFinanciado : 0;
+        const observaciones = `Adjudicación del plan de ahorro #${planId}`;
+
+        const [ventaResult] = await connection.query(
+            `INSERT INTO ventas
+                (empresa_id, cliente_id, plan_ahorro_id, fecha, total, metodo_pago,
+                 estado_pago, saldo_pendiente, observaciones, numero, numero_plan_pagos)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                empresaId,
+                plan.cliente_id,
+                planId,
+                fechaArg,
+                redondear2(precioCentavos / 100),
+                metodoPago,
+                estadoPago,
+                saldoPendiente,
+                observaciones,
+                nuevoNumero,
+                nuevoNumeroPlanPagos
+            ]
+        );
+
+        const ventaId = ventaResult.insertId;
+
+        const [detalleResult] = await connection.query(
+            `INSERT INTO detalle_ventas
+                (empresa_id, venta_id, producto_id, cantidad, precio_unitario)
+             VALUES (?, ?, ?, 1, ?)`,
+            [
+                empresaId,
+                ventaId,
+                plan.producto_id,
+                redondear2(precioCentavos / 100)
+            ]
+        );
+
+        await connection.query(
+            `UPDATE vehiculos_unidades
+             SET estado_venta = 'Vendido',
+                 venta_id = ?,
+                 venta_detalle_id = ?
+             WHERE empresa_id = ? AND id = ?`,
+            [ventaId, detalleResult.insertId, empresaId, unidadId]
+        );
+
+        if (producto.control_stock) {
+            await connection.query(
+                `UPDATE productos
+                 SET stock = GREATEST(stock - 1, 0)
+                 WHERE empresa_id = ? AND id = ?`,
+                [empresaId, plan.producto_id]
+            );
+        }
+
+        for (const anticipo of anticiposDisponibles) {
+            if (anticipo.disponibleCentavos <= 0) continue;
+
+            await connection.query(
+                `INSERT INTO anticipos_plan_aplicaciones
+                    (empresa_id, anticipo_id, venta_id, importe)
+                 VALUES (?, ?, ?, ?)`,
+                [
+                    empresaId,
+                    anticipo.id,
+                    ventaId,
+                    redondear2(anticipo.disponibleCentavos / 100)
+                ]
+            );
+        }
+
+        if (esFinanciada) {
+            const [saldoRows] = await connection.query(
+                `SELECT COALESCE(SUM(debe - haber), 0) AS saldo_actual
+                 FROM cuenta_corriente
+                 WHERE empresa_id = ? AND cliente_id = ? AND estado = 1`,
+                [empresaId, plan.cliente_id]
+            );
+
+            const saldoActual = Number(saldoRows[0].saldo_actual || 0);
+            const nuevoSaldo = redondear2(saldoActual + saldoFinanciado);
+
+            await connection.query(
+                `INSERT INTO cuenta_corriente
+                    (empresa_id, cliente_id, venta_id, fecha, descripcion,
+                     debe, haber, saldo_acumulado)
+                 VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
+                [
+                    empresaId,
+                    plan.cliente_id,
+                    ventaId,
+                    fechaArg,
+                    `Saldo financiado de la adjudicación del plan #${planId}`,
+                    saldoFinanciado,
+                    nuevoSaldo
+                ]
+            );
+
+            for (const cuota of cuotasGeneradas) {
+                await connection.query(
+                    `INSERT INTO venta_cuotas
+                        (empresa_id, venta_id, cliente_id, numero_cuota,
+                         fecha_vencimiento, monto, saldo_pendiente, estado)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, 'Pendiente')`,
+                    [
+                        empresaId,
+                        ventaId,
+                        plan.cliente_id,
+                        cuota.numero,
+                        cuota.fecha_vencimiento,
+                        cuota.monto,
+                        cuota.monto
+                    ]
+                );
+            }
+        }
+
+        await connection.query(
+            `UPDATE planes_ahorro
+             SET estado = 'Adjudicado'
+             WHERE empresa_id = ? AND id = ? AND estado = 'Activo'`,
+            [empresaId, planId]
+        );
+
+        await connection.commit();
+
+        res.status(201).json({
+            mensaje: 'Plan adjudicado correctamente.',
+            plan_id: planId,
+            venta_id: ventaId,
+            numero_venta: nuevoNumero,
+            precio_vigente: redondear2(precioCentavos / 100),
+            anticipos_aplicados: redondear2(totalAnticiposCentavos / 100),
+            saldo_financiado: esFinanciada ? saldoFinanciado : 0,
+            cuotas: cuotasGeneradas
+        });
+    } catch (error) {
+        await connection.rollback();
+        console.error('Error al adjudicar plan de ahorro:', error);
+        res.status(500).json({ error: 'No se pudo adjudicar el plan de ahorro.' });
+    } finally {
+        connection.release();
+    }
+};
+
 exports.obtenerVentas = async (req, res) => {
     try {
         const empresaId = req.empresaId;
