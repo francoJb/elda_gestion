@@ -8,7 +8,7 @@ const verificarTenant = require('../middlewares/tenantMiddleware');
 router.get('/', verificarToken, verificarTenant, clientesController.obtenerClientes);
 router.post('/', verificarToken, verificarTenant, clientesController.crearCliente);
 router.put('/:id', verificarToken, verificarTenant, clientesController.editarCliente);
-router.put('/:id/restaurar', verificarToken, verificarTenant, clientesController.restaurarCliente);
+router.put('/:id/reactivar', verificarToken, verificarTenant, clientesController.reactivarCliente);
 router.delete('/:id', verificarToken, verificarTenant, clientesController.eliminarCliente);
 router.get('/:id/cuenta-corriente', verificarToken, verificarTenant, clientesController.obtenerCuentaCorriente);
 

@@ -796,16 +796,21 @@ exports.obtenerTopProductosMasVendidos = async (req, res) => {
         const empresaId = req.empresaId; // Control multiempresa
 
         const query = `
-            SELECT 
+            SELECT
                 p.id AS producto_id,
-                p.descripcion AS nombre,
-                SUM(dv.cantidad) AS cantidad_vendida,
-                SUM(dv.cantidad * dv.precio_unitario) AS total_recaudado
+                p.descripcion AS descripcion,
+                SUM(dv.cantidad) AS cantidad
             FROM detalle_ventas dv
-            JOIN productos p ON dv.producto_id = p.id
+            JOIN ventas v
+            ON v.id = dv.venta_id
+            AND v.empresa_id = dv.empresa_id
+            JOIN productos p
+            ON p.id = dv.producto_id
+            AND p.empresa_id = dv.empresa_id
             WHERE dv.empresa_id = ?
+            AND v.anulada = 0
             GROUP BY p.id, p.descripcion
-            ORDER BY cantidad_vendida DESC
+            ORDER BY cantidad DESC
             LIMIT 5
         `;
 

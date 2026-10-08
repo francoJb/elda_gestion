@@ -36,17 +36,35 @@ exports.crearCliente = async (req, res) => {
         res.status(201).json({ id: result.insertId, ...p });
     } catch (err) {
         if (err.code === 'ER_DUP_ENTRY') {
-            const msg = (err.sqlMessage || err.message || "").toLowerCase();
+            const mensaje = (err.sqlMessage || err.message || '').toLowerCase();
 
-            if (msg.includes("dni")) {
-                return res.status(400).json({ error: "El DNI ya está registrado" });
+            if (mensaje.includes('dni')) {
+                const [clientesBorrados] = await db.query(
+                    `SELECT id, nombre, apellido
+                    FROM clientes
+                    WHERE empresa_id = ? AND dni = ? AND estado = 0
+                    LIMIT 1`,
+                    [req.empresaId, p.dni.trim()]
+                );
+
+                if (clientesBorrados.length > 0) {
+                    return res.status(409).json({
+                        codigo: 'DNI_PERTENECE_A_CLIENTE_BORRADO',
+                        cliente_id: clientesBorrados[0].id,
+                        nombre: clientesBorrados[0].nombre,
+                        apellido: clientesBorrados[0].apellido,
+                        error: 'El DNI pertenece a un cliente borrado.'
+                    });
+                }
+
+                return res.status(400).json({ error: 'El DNI ya está registrado.' });
             }
 
-            if (msg.includes("cuit") || msg.includes("cuil")) {
-                return res.status(400).json({ error: "El CUIT/CUIL ya está registrado" });
+            if (mensaje.includes('cuit') || mensaje.includes('cuil')) {
+                return res.status(400).json({ error: 'El CUIT/CUIL ya está registrado.' });
             }
 
-            return res.status(400).json({ error: "DNI o CUIT ya registrado" });
+            return res.status(400).json({ error: 'DNI o CUIT ya registrado.' });
         }
         // MySQL usa ENUM, si el valor no coincide daría error aquí
         if (err.code === 'ER_WARN_DATA_TRUNCATED') {
@@ -83,57 +101,124 @@ exports.editarCliente = async (req, res) => {
 };
 
 exports.eliminarCliente = async (req, res) => {
-    const { id } = req.params;
+    const id = Number(req.params.id);
     const empresaId = req.empresaId;
-    
-    // Usamos NOW() de MySQL para evitar errores de formato string vs datetime en Staging
-    const sql = `UPDATE clientes SET estado = 0, deleted_at = NOW(), deleted_by = ? WHERE empresa_id = ? AND id = ?`;
-    
+
+    if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ error: 'El cliente indicado no es válido.' });
+    }
+
+    const connection = await db.getConnection();
+
     try {
-        // Quitamos la variable 'fecha' de los parámetros ya que NOW() lo resuelve la base de datos
-        const [result] = await db.query(sql, [req.usuarioId || null, empresaId, id]);
-        
+        await connection.beginTransaction();
+
+        const [result] = await connection.query(
+            `UPDATE clientes
+             SET estado = 0, deleted_at = NOW(), deleted_by = ?
+             WHERE empresa_id = ? AND id = ? AND estado = 1`,
+            [req.usuarioId || null, empresaId, id]
+        );
+
         if (result.affectedRows === 0) {
-            return res.status(404).json({ mensaje: "Cliente no encontrado o no pertenece a la empresa" });
+            await connection.rollback();
+            return res.status(404).json({ error: 'Cliente no encontrado o ya borrado.' });
         }
-        
-        // Registrar auditoría
-        await logAction(db, { 
-            empresaId, 
-            usuarioId: req.usuarioId || null, 
-            accion: 'soft_delete', 
-            entidad: 'clientes', 
-            entidadId: id, 
-            descripcion: 'Cliente desactivado' 
+
+        await logAction(connection, {
+            empresaId,
+            usuarioId: req.usuarioId || null,
+            accion: 'soft_delete_permanent',
+            entidad: 'clientes',
+            entidadId: id,
+            descripcion: 'Cliente borrado desde la aplicación. Ventas y registros históricos conservados.'
         });
-        
-        res.json({ 
-            mensaje: "Cliente desactivado correctamente",
-            id: id 
+
+        await connection.commit();
+
+        res.json({
+            mensaje: 'Cliente borrado correctamente. Las ventas se conservaron.',
+            id
         });
     } catch (err) {
-        console.error("Error al desactivar cliente:", err.message);
-        res.status(500).json({ error: err.message });
+        await connection.rollback();
+        console.error('Error al borrar cliente:', err);
+        res.status(500).json({ error: 'No se pudo borrar el cliente.' });
+    } finally {
+        connection.release();
     }
 };
 
-exports.restaurarCliente = async (req, res) => {
-    const { id } = req.params;
+exports.reactivarCliente = async (req, res) => {
+    const id = Number(req.params.id);
     const empresaId = req.empresaId;
+    const p = req.body;
+
+    if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ error: 'El cliente indicado no es válido.' });
+    }
+
+    if (!p.nombre?.trim() || !p.apellido?.trim() || !p.dni?.trim()) {
+        return res.status(400).json({ error: 'Nombre, apellido y DNI son obligatorios.' });
+    }
+
+    const cuitLimpio = (p.cuit || '').trim();
+    const cuit = cuitLimpio === '' ? null : cuitLimpio;
+    const connection = await db.getConnection();
 
     try {
-        const [result] = await db.query(
-            "UPDATE clientes SET estado = 1, deleted_at = NULL, deleted_by = NULL WHERE empresa_id = ? AND id = ? AND estado = 0",
-            [empresaId, id]
+        await connection.beginTransaction();
+
+        const [resultado] = await connection.query(
+            `UPDATE clientes
+             SET nombre = ?, apellido = ?, telefono = ?, direccion = ?, dni = ?,
+                 cuit = ?, arca = ?, email = ?, habilitar_cc = ?,
+                 estado = 1, deleted_at = NULL, deleted_by = NULL
+             WHERE empresa_id = ? AND id = ? AND estado = 0`,
+            [
+                p.nombre.trim(),
+                p.apellido.trim(),
+                p.telefono || '',
+                p.direccion || '',
+                p.dni.trim(),
+                cuit,
+                p.arca || null,
+                p.email || '',
+                p.habilitar_cc ? 1 : 0,
+                empresaId,
+                id
+            ]
         );
-        if (result.affectedRows === 0) {
-            return res.status(404).json({ mensaje: "Cliente eliminado no encontrado" });
+
+        if (resultado.affectedRows === 0) {
+            await connection.rollback();
+            return res.status(404).json({ error: 'No se encontró el cliente borrado.' });
         }
-        await logAction(db, { empresaId, usuarioId: req.usuarioId || null, accion: 'restore', entidad: 'clientes', entidadId: id, descripcion: 'Cliente restaurado' });
-        res.json({ mensaje: "Cliente restaurado correctamente", id });
-    } catch (err) {
-        console.error("Error al restaurar cliente:", err.message);
-        res.status(500).json({ error: err.message });
+
+        await logAction(connection, {
+            empresaId,
+            usuarioId: req.usuarioId || null,
+            accion: 'reactivate_by_dni',
+            entidad: 'clientes',
+            entidadId: id,
+            descripcion: 'Cliente reactivado al intentar registrar nuevamente su DNI. Historial conservado.'
+        });
+
+        await connection.commit();
+        res.json({ mensaje: 'Cliente reactivado correctamente.', id });
+    } catch (error) {
+        await connection.rollback();
+        console.error('Error al reactivar cliente:', error);
+
+        if (error.code === 'ER_DUP_ENTRY') {
+            return res.status(400).json({
+                error: 'El CUIT/CUIL ingresado ya está registrado en otro cliente.'
+            });
+        }
+
+        res.status(500).json({ error: 'No se pudo reactivar el cliente.' });
+    } finally {
+        connection.release();
     }
 };
 

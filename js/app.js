@@ -332,7 +332,9 @@ window.resetEmpresaForm = resetEmpresaForm;
 window.resetUsuarioForm = resetUsuarioForm;
 
 function formatMoney(value) {
-    return `$${Number(value || 0).toFixed(2)}`;
+    return `$${Number(value || 0).toLocaleString('es-AR', {
+        maximumFractionDigits: 0
+    })}`;
 }
 
 function fechaValida(fecha) {
@@ -344,21 +346,13 @@ function fechaValida(fecha) {
 // FUNCIONES DEL DASHBOARD
 // ==========================================
 async function obtenerTopProductosMasVendidos() {
-    try {
-        // Hacemos UNA SOLA petición al nuevo endpoint optimizado
-        const response = await apiFetch(`${API_BASE_URL}/api/ventas/top-productos`);
-        if (!response.ok) throw new Error("Error en la respuesta del servidor");
-        
-        const topProductos = await response.json();
-        
-        // Aquí mandas los datos directamente a tu función que dibuja el gráfico del Dashboard
-        // Ej: actualizarGraficoProductos(topProductos);
-        
-        return topProductos;
-    } catch (error) {
-        console.error("❌ Error al cargar el top de productos para el dashboard:", error);
-        return [];
+    const response = await apiFetch(`${API_BASE_URL}/api/ventas/top-productos`);
+
+    if (!response.ok) {
+        throw new Error('No se pudieron cargar los productos más vendidos.');
     }
+
+    return response.json();
 }
 
 function generarListaStockBajo(productos) {
@@ -482,13 +476,19 @@ async function renderDashboard() {
             `;
         }).join('');
 
-        const topProductos = await obtenerTopProductosMasVendidos(ventasValidas);
-        document.getElementById("dashboardTopProductosBody").innerHTML = topProductos.map(p => `
-            <tr class="hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
-                <td class="p-3 text-gray-700 dark:text-gray-200">${escapeHTML(p.descripcion)}</td>
-                <td class="p-3 text-right font-bold text-slate-900 dark:text-white">${p.cantidad}</td>
-            </tr>
-        `).join('');
+        const topProductos = await obtenerTopProductosMasVendidos();
+        const cuerpoTop = document.getElementById('dashboardTopProductosBody');
+
+        cuerpoTop.innerHTML = topProductos.length
+            ? topProductos.map(p => `
+                <tr class="hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
+                    <td class="p-3 text-gray-700 dark:text-gray-200">${escapeHTML(p.descripcion)}</td>
+                    <td class="p-3 text-right font-bold text-slate-900 dark:text-white">
+                        ${Number(p.cantidad).toLocaleString('es-AR')}
+                    </td>
+                </tr>
+            `).join('')
+            : '<tr><td colspan="2" class="p-4 text-center text-gray-500">Todavía no hay ventas registradas.</td></tr>';
 
         crearGraficoVentas(ventas);
     } catch (error) {

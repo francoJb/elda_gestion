@@ -141,6 +141,7 @@ exports.crearPlanAhorro = async (req, res) => {
     const empresaId = req.empresaId;
     const clienteId = Number(req.body.cliente_id);
     const productoId = Number(req.body.producto_id);
+    const precioAcordado = Number(req.body.precio_acordado || 0);
     const importeInicial = Number(req.body.anticipo_inicial || 0);
     const medioPago = req.body.medio_pago || null;
     const observaciones = req.body.observaciones || null;
@@ -201,9 +202,9 @@ exports.crearPlanAhorro = async (req, res) => {
 
         const [planResult] = await connection.query(
             `INSERT INTO planes_ahorro
-                (empresa_id, cliente_id, producto_id, estado, observaciones)
-             VALUES (?, ?, ?, 'Activo', ?)`,
-            [empresaId, clienteId, productoId, observaciones]
+                (empresa_id, cliente_id, producto_id, precio_acordado, estado, observaciones)
+             VALUES (?, ?, ?, ?, 'Activo', ?)`,
+            [empresaId, clienteId, productoId, precioAcordado, observaciones]
         );
 
         let anticipoId = null;
@@ -223,6 +224,7 @@ exports.crearPlanAhorro = async (req, res) => {
                 `SELECT
                     ap.id AS anticipo_id,
                     ap.plan_id,
+                    pa.precio_acordado AS precio_acordado,
                     ap.importe,
                     ap.medio_pago,
                     ap.fecha,
@@ -331,6 +333,7 @@ exports.registrarAnticipo = async (req, res) => {
             `SELECT
                 ap.id AS anticipo_id,
                 ap.plan_id,
+                pa.precio_acordado AS precio_acordado,
                 ap.importe,
                 ap.medio_pago,
                 ap.fecha,
@@ -561,6 +564,7 @@ exports.registrarDevolucionPlan = async (req, res) => {
             `SELECT
                 dpo.id AS devolucion_id,
                 dpo.plan_id,
+                pa.precio_acordado AS precio_acordado,
                 dpo.importe_total,
                 dpo.medio_pago,
                 dpo.observaciones,
@@ -602,5 +606,71 @@ exports.registrarDevolucionPlan = async (req, res) => {
         res.status(500).json({ error: 'No se pudo registrar la devolución.' });
     } finally {
         connection.release();
+    }
+};
+
+exports.obtenerMovimientosPlan = async (req, res) => {
+    const empresaId = req.empresaId;
+    const planId = Number(req.params.id);
+
+    if (!Number.isInteger(planId) || planId <= 0) {
+        return res.status(400).json({ error: 'El plan indicado no es válido.' });
+    }
+
+    try {
+        const [movimientos] = await db.query(
+            `SELECT
+                'Anticipo' AS tipo,
+                ap.id AS movimiento_id,
+                ap.fecha,
+                ap.importe,
+                ap.medio_pago,
+                ap.observaciones
+             FROM anticipos_plan ap
+             WHERE ap.empresa_id = ?
+               AND ap.plan_id = ?
+               AND ap.estado = 'Confirmado'
+
+             UNION ALL
+
+             SELECT
+                'Devolución' AS tipo,
+                dpo.id AS movimiento_id,
+                dpo.fecha,
+                dpo.importe_total AS importe,
+                dpo.medio_pago,
+                dpo.observaciones
+             FROM devoluciones_plan_operaciones dpo
+             WHERE dpo.empresa_id = ?
+               AND dpo.plan_id = ?
+
+             UNION ALL
+
+             SELECT
+                'Aplicado a venta' AS tipo,
+                a.id AS movimiento_id,
+                a.fecha,
+                a.importe,
+                NULL AS medio_pago,
+                CONCAT('Venta #', COALESCE(v.numero, v.id)) AS observaciones
+             FROM anticipos_plan_aplicaciones a
+             JOIN anticipos_plan ap
+               ON ap.id = a.anticipo_id
+              AND ap.empresa_id = a.empresa_id
+             JOIN ventas v
+               ON v.id = a.venta_id
+              AND v.empresa_id = a.empresa_id
+             WHERE a.empresa_id = ?
+               AND ap.plan_id = ?
+               AND ap.estado = 'Confirmado'
+
+             ORDER BY fecha DESC, movimiento_id DESC`,
+            [empresaId, planId, empresaId, planId, empresaId, planId]
+        );
+
+        res.json(movimientos);
+    } catch (error) {
+        console.error('Error al obtener movimientos del plan:', error);
+        res.status(500).json({ error: 'No se pudieron cargar los movimientos del plan.' });
     }
 };

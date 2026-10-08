@@ -37,15 +37,13 @@ export async function guardarClienteAPI(datos, id = null) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(datos)
         });
+        const resultado = await res.json();
+
         if (!res.ok) {
-            let mensaje = "Error al guardar cliente";
-            try {
-                const errorData = await res.json();
-                mensaje = errorData.error || mensaje;
-            } catch {}
-            throw new Error(mensaje);
+            return { ok: false, ...resultado };
         }
-        return true;
+
+        return { ok: false, error: error.message };
     } catch (error) {
         mostrarAlerta("❌ " + error.message, "Error", "error");
         return false;
@@ -78,19 +76,63 @@ export function configurarFormularioCliente() {
             return;
         }
         
-        const exito = await guardarClienteAPI(datos, id || null);
-        if (exito) {
-            mostrarAlerta("Cliente guardado correctamente", "¡Éxito!", "success");
-            formCliente.reset();
+        let resultado = await guardarClienteAPI(datos, id || null);
 
-            await listarClientes(); // Recarga la tabla de clientes
+        if (!resultado.ok && resultado.codigo === 'DNI_PERTENECE_A_CLIENTE_BORRADO') {
+            const nombreAnterior = `${resultado.nombre} ${resultado.apellido}`.trim();
+            const confirmado = await mostrarConfirmacion({
+                title: 'Reactivar cliente',
+                message:
+                    `El DNI pertenece al cliente borrado ${nombreAnterior}. ` +
+                    '¿Desea reactivar su ficha y actualizarla con los datos ingresados? ' +
+                    'Las ventas realizadas a este cliente no se borrarán.',
+                confirmText: 'Reactivar',
+                cancelText: 'Cancelar'
+            });
 
-            if (typeof window.cargarDatosParaVenta === "function") {
-                await window.cargarDatosParaVenta(); // Recarga el select de clientes en ventas
+            if (!confirmado) return;
+
+            try {
+                const respuesta = await apiFetch(
+                    `${API_URL}/${resultado.cliente_id}/reactivar`,
+                    {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(datos)
+                    }
+                );
+
+                resultado = await respuesta.json();
+
+                if (!respuesta.ok) {
+                    throw new Error(resultado.error || 'No se pudo reactivar el cliente.');
+                }
+
+                resultado.ok = true;
+            } catch (error) {
+                mostrarAlerta(error.message, 'Error al reactivar', 'error');
+                return;
             }
-
-            cambiarSeccion('seccionClientes');
         }
+
+        if (!resultado.ok) {
+            mostrarAlerta(resultado.error || 'No se pudo guardar el cliente.', 'Error', 'error');
+            return;
+        }
+
+        mostrarAlerta(
+            resultado.mensaje || 'Cliente guardado correctamente.',
+            '¡Éxito!',
+            'success'
+        );
+        formCliente.reset();
+        await listarClientes('activos');
+
+        if (typeof window.cargarDatosParaVenta === 'function') {
+            await window.cargarDatosParaVenta();
+        }
+
+        cambiarSeccion('seccionClientes');
     };
 }
 
@@ -132,9 +174,10 @@ export async function prepararEdicionCliente(id) {
 
 export async function eliminarCliente(id, nombre){
     const rta = await mostrarConfirmacion({
-        title: "Eliminar cliente",
-        message: `¿Estás seguro de que querés eliminar a "${nombre}"? Esta acción solo desactivará el cliente.`,
-        confirmText: "Eliminar"
+        title: "Borrar cliente",
+        message: `¿Está seguro de que desea borrar el cliente: ${nombre}? Las ventas realizadas a este cliente no se borrarán.`,
+        confirmText: "Borrar",
+        cancelText: "Cancelar"
     });
     if (!rta) return;
 
@@ -143,8 +186,11 @@ export async function eliminarCliente(id, nombre){
             method: 'DELETE'
         });
         if (response.ok) {
-            mostrarAlerta("Cliente eliminado con éxito.", "¡Éxito!", "success");
+            mostrarAlerta("Cliente borrado correctamente. Sus ventas se conservaron.", "¡Éxito!", "success");
             await listarClientes(clientesEstado);
+            if (typeof window.cargarDatosParaVenta === "function") {
+                await window.cargarDatosParaVenta();
+            }
         } else {
             mostrarAlerta("No se pudo eliminar el cliente.", "Error", "error");
         }
@@ -153,23 +199,6 @@ export async function eliminarCliente(id, nombre){
         mostrarAlerta("Error de conexión al eliminar el cliente.", "Error de conexión", "error");
     }
 };
-
-export async function restaurarCliente(id) {
-    try {
-        const response = await apiFetch(`${API_URL}/${id}/restaurar`, {
-            method: 'PUT'
-        });
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || 'No se pudo restaurar el cliente');
-        }
-        mostrarAlerta('Cliente restaurado correctamente.', '¡Éxito!', 'success');
-        await listarClientes(clientesEstado);
-    } catch (error) {
-        console.error('Error al restaurar cliente:', error);
-        mostrarAlerta('Error al restaurar el cliente: ' + error.message, 'Error', 'error');
-    }
-}
 
 export async function cargarDatosBalance(clienteId) {
     try {
@@ -306,23 +335,13 @@ export async function initClientes() {
         btnCerrarModalCliente.onclick = () => cambiarSeccion("seccionClientes");
     }
 
-    const toggleEliminados = document.getElementById("toggleClientesEliminados");
-    if (toggleEliminados) {
-        toggleEliminados.onchange = async (e) => {
-            await listarClientes(e.target.checked ? 'eliminados' : 'activos');
-        };
-    }
-
     document.addEventListener("click", (ec) => {
         const btn = ec.target.closest(".btn-eliminarCli");
         if (!btn) return;
         const id = btn.dataset.id;
-        const desc = btn.dataset.desc;
+        const desc = `${btn.dataset.desc || ''} ${btn.dataset.apellido || ''}`.trim();
         eliminarCliente(id, desc);
     });
-
-    window.restaurarCliente = restaurarCliente;
-    console.log("✅ Módulo de Clientes inicializado");
 }
 
 function movimientoEstaEnRango(movimiento, fechaDesde, fechaHasta) {

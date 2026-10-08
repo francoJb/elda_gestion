@@ -22,6 +22,9 @@
                             cyan: {
                                 600: '#00CED1',
                                 700: '#00A8A8',
+                            },
+                            verde: {
+                                400: '#4ade80',
                             }
                         }
                     }
@@ -254,10 +257,6 @@
                     </header>
                     <div class="flex flex-col sm:flex-row sm:items-center gap-3">
                         <input type="text" id="buscarCliente" placeholder="Buscar por Nombre, apellido, DNI o CUIT..." class="form-input">
-                        <label class="mb-6 inline-flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
-                            <input type="checkbox" id="toggleClientesEliminados" class="form-checkbox">
-                            Mostrar eliminados
-                        </label>
                     </div>
                     <div class="bg-white/90 dark:bg-slate-900/90 rounded-2xl shadow-lg shadow-slate-900/5 border border-slate-200 dark:border-cyan-400/10 backdrop-blur overflow-x-auto">
                         <table class="w-full min-w-[760px] text-left border-collapse">
@@ -1235,6 +1234,22 @@
                         <select id="planAhorroModelo" class="form-input"></select>
                     </div>
                     <div>
+                        <label for="planAhorroPrecioAcordado" class="block text-sm mb-1">
+                            Precio acordado con el cliente
+                        </label>
+                        <input
+                            id="planAhorroPrecioAcordado"
+                            type="number"
+                            min="0.01"
+                            step="0.01"
+                            required
+                            class="form-input"
+                        >
+                        <p class="mt-1 text-xs text-gray-500">
+                            Es un dato histórico; no congela el precio para la adjudicación.
+                        </p>
+                    </div>
+                    <div>
                         <label for="planAhorroAnticipo" class="block text-sm mb-1">
                             Anticipo inicial (opcional)
                         </label>
@@ -1277,6 +1292,37 @@
                             Guardar plan
                         </button>
                     </div>
+                </div>
+            </div>
+        </div>
+
+<!-- Modal Movimientos del Plan -->
+        <div id="modalMovimientosPlan" class="modal-overlay hidden" style="z-index:130;">
+            <div class="modal-card" style="max-width:56rem;">
+                <div class="bg-slate-700 p-4 text-white flex justify-between">
+                    <h3 id="tituloMovimientosPlan" class="text-xl font-bold">Movimientos del plan</h3>
+                    <button
+                        type="button"
+                        onclick="document.getElementById('modalMovimientosPlan').classList.add('hidden')"
+                        aria-label="Cerrar"
+                    >
+                        ✕
+                    </button>
+                </div>
+
+                <div class="p-4 overflow-x-auto">
+                    <table class="table-base min-w-[700px]">
+                        <thead class="table-head">
+                            <tr>
+                                <th class="p-3">Fecha</th>
+                                <th class="p-3">Movimiento</th>
+                                <th class="p-3">Importe</th>
+                                <th class="p-3">Medio de pago</th>
+                                <th class="p-3">Observaciones</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tablaMovimientosPlan"></tbody>
+                    </table>
                 </div>
             </div>
         </div>
@@ -1331,6 +1377,7 @@
             </div>
         </div>
 
+        <!-- Modal Devolución de Plan -->
         <div id="modalDevolucionPlan" class="modal-overlay hidden" style="z-index:130;">
             <div class="modal-card" style="max-width:32rem;">
                 <div class="bg-amber-600 p-4 text-white">

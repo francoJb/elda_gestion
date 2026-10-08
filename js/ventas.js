@@ -256,8 +256,8 @@ window.agregarProductosSeleccionados = async () => {
 window.toggleSeleccionProductoFila = (row) => {
     const seleccionada = row.dataset.selected === "true";
     row.dataset.selected = seleccionada ? "false" : "true";
-    row.classList.toggle("bg-cyan-100", !seleccionada);
-    row.classList.toggle("dark:bg-cyan-900/80", !seleccionada);
+    row.classList.toggle("bg-verde-400", !seleccionada);
+    row.classList.toggle("dark:bg-verde-400/80", !seleccionada);
 };
 
 window.filtrarProductosModal = () => {
@@ -405,6 +405,15 @@ window.guardarPlanAhorro = async () => {
     boton.disabled = true;
     boton.textContent = 'Guardando...';
 
+    const precioAcordado = Number(
+        document.getElementById('planAhorroPrecioAcordado').value
+    );
+
+    if (!Number.isFinite(precioAcordado) || precioAcordado <= 0) {
+        mostrarAlerta('Ingresá un precio acordado válido.', 'Precio inválido', 'warning');
+        return;
+    }
+
     try {
         const respuesta = await apiFetch(`${API_BASE_URL}/api/planes-ahorro`, {
             method: 'POST',
@@ -414,7 +423,8 @@ window.guardarPlanAhorro = async () => {
                 producto_id: Number(document.getElementById('planAhorroModelo').value),
                 anticipo_inicial: anticipo,
                 medio_pago: document.getElementById('planAhorroMedioPago').value,
-                observaciones: document.getElementById('v-observaciones').value
+                observaciones: document.getElementById('v-observaciones').value,
+                precio_acordado: precioAcordado,
             })
         });
 
@@ -491,6 +501,64 @@ window.abrirHistorialPlanesAhorro = async () => {
     }
 };
 
+window.verMovimientosPlan = async planId => {
+    try {
+        const respuesta = await apiFetch(
+            `${URL_PLANES_AHORRO}/${planId}/movimientos`
+        );
+        const movimientos = await respuesta.json();
+
+        if (!respuesta.ok) {
+            throw new Error(movimientos.error || 'No se pudieron cargar los movimientos.');
+        }
+
+        const tbody = document.getElementById('tablaMovimientosPlan');
+        tbody.replaceChildren();
+        document.getElementById('tituloMovimientosPlan').textContent =
+            `Movimientos del plan #${planId}`;
+
+        if (movimientos.length === 0) {
+            const fila = document.createElement('tr');
+            const celda = document.createElement('td');
+            celda.colSpan = 5;
+            celda.className = 'p-4 text-center text-gray-500';
+            celda.textContent = 'Este plan todavía no tiene movimientos.';
+            fila.appendChild(celda);
+            tbody.appendChild(fila);
+        } else {
+            for (const movimiento of movimientos) {
+                const fila = document.createElement('tr');
+                fila.className = 'border-b dark:border-slate-700';
+
+                const fecha = new Date(movimiento.fecha).toLocaleString('es-AR');
+                const importe = Number(movimiento.importe || 0).toLocaleString('es-AR', {
+                    style: 'currency',
+                    currency: 'ARS'
+                });
+
+                for (const valor of [
+                    fecha,
+                    movimiento.tipo,
+                    importe,
+                    movimiento.medio_pago || '—',
+                    movimiento.observaciones || '—'
+                ]) {
+                    const celda = document.createElement('td');
+                    celda.className = 'p-3';
+                    celda.textContent = valor;
+                    fila.appendChild(celda);
+                }
+
+                tbody.appendChild(fila);
+            }
+        }
+
+        document.getElementById('modalMovimientosPlan').classList.remove('hidden');
+    } catch (error) {
+        mostrarAlerta(error.message, 'Error al cargar movimientos', 'error');
+    }
+};
+
 window.filtrarHistorialPlanesAhorro = () => {
     const texto = document
         .getElementById('filtroHistorialPlanes')
@@ -554,6 +622,14 @@ function renderizarHistorialPlanesAhorro(planes) {
 
         const celdaAcciones = document.createElement('td');
         celdaAcciones.className = 'p-3 whitespace-nowrap';
+        const botonMovimientos = document.createElement('button');
+        botonMovimientos.type = 'button';
+        botonMovimientos.textContent = '📋';
+        botonMovimientos.title = 'Ver movimientos';
+        botonMovimientos.setAttribute('aria-label', 'Ver movimientos del plan');
+        botonMovimientos.className = 'text-blue-500 hover:scale-150 transition-transform mr-2';
+        botonMovimientos.addEventListener('click', () => {window.verMovimientosPlan(plan.plan_id);});
+        celdaAcciones.appendChild(botonMovimientos);
 
         if (plan.estado === 'Activo') {
             const acciones = [
@@ -2007,6 +2083,8 @@ async function generarReciboAnticipoPDF(anticipo) {
     y += 6;
     doc.text(`Modelo solicitado: ${anticipo.producto || 'No informado'}`, margin, y);
     y += 6;
+    doc.text(`Precio acordado al crear el plan (referencia): $${Number(anticipo.precio_acordado || 0).toFixed(2)}`, margin, y);
+    y +=6 ;
     doc.text(`Importe recibido: $${importe}`, margin, y);
     y += 6;
     doc.text(`Total acumulado del plan después de este pago: $${Number(anticipo.saldo_acumulado || 0).toFixed(2)}`, margin, y);
@@ -2077,6 +2155,8 @@ async function generarReciboDevolucionPlanPDF(devolucion) {
     doc.text(`Plan de ahorro N°: ${devolucion.plan_id}`, margin, y);
     y += 6;
     doc.text(`Modelo: ${devolucion.producto || 'No informado'}`, margin, y);
+    y += 6;
+    doc.text(`Precio acordado al crear el plan (referencia): $${Number(devolucion.precio_acordado || 0).toFixed(2)}`, margin, y);
     y += 6;
     doc.text(`Importe devuelto: $${importe}`, margin, y);
     y += 6;

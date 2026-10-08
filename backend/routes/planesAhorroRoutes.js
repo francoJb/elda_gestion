@@ -11,5 +11,6 @@ router.post('/:id/anticipos', verificarToken, verificarTenant, controller.regist
 router.get('/', verificarToken, verificarTenant, controller.obtenerPlanesActivos);
 router.post('/:id/adjudicar', verificarToken, verificarTenant, ventasController.adjudicarPlanAhorro);
 router.post('/:id/devoluciones', verificarToken, verificarTenant, controller.registrarDevolucionPlan);
+router.get('/:id/movimientos', verificarToken, verificarTenant, controller.obtenerMovimientosPlan);
 
 module.exports = router;

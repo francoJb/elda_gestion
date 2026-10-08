@@ -53,7 +53,7 @@ export function actualizarTablaVenta(carritoVenta) {
                 </td>
                 <td class="p-4 text-right font-black text-gray-900 dark:text-white font-mono">$${item.subtotal.toFixed(2)}</td>
                 <td class="p-4 text-center">
-                    <button class="btn-quitar text-red-500 hover:text-red-700 text-xs" data-index="${index}" title="Quitar">Eliminar</button>
+                    <button class="btn-quitar text-red-500 hover:scale-125 transition-transform" data-index="${index}" title="Quitar">🗑️
                 </td>
             </tr>
         `;
