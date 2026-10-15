@@ -8,6 +8,11 @@ exports.obtenerHistorialPlanes = async (req, res) => {
 
         const [planes] = await db.query(
             `SELECT
+                pa.precio_acordado,
+                pa.observaciones,
+                c.dni AS cliente_dni,
+                c.cuit AS cliente_cuit,
+                c.direccion AS cliente_direccion,
                 pa.id AS plan_id,
                 pa.estado,
                 pa.fecha_creacion,

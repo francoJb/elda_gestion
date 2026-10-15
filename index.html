@@ -475,7 +475,50 @@
                             </button>
                         </div>
                     </header>
-                    <input id="filtroHistorialPlanes" type="search" oninput="filtrarHistorialPlanesAhorro()" placeholder="Buscar por plan, cliente, modelo o estado" class="form-input mb-4">
+                    <div class="mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                        <input
+                            id="filtroHistorialPlanes"
+                            type="search"
+                            oninput="filtrarHistorialPlanesAhorro()"
+                            placeholder="Buscar plan, cliente o modelo"
+                            class="form-input"
+                        >
+
+                        <select
+                            id="filtroEstadoPlanes"
+                            onchange="filtrarHistorialPlanesAhorro()"
+                            class="form-input"
+                        >
+                            <option value="">Todos los estados</option>
+                            <option value="Activo">Activo</option>
+                            <option value="Adjudicado">Adjudicado</option>
+                            <option value="Cancelado">Cancelado</option>
+                        </select>
+
+                        <input
+                            id="filtroFechaDesdePlanes"
+                            type="date"
+                            aria-label="Fecha desde"
+                            onchange="filtrarHistorialPlanesAhorro()"
+                            class="form-input"
+                        >
+
+                        <input
+                            id="filtroFechaHastaPlanes"
+                            type="date"
+                            aria-label="Fecha hasta"
+                            onchange="filtrarHistorialPlanesAhorro()"
+                            class="form-input"
+                        >
+
+                        <button
+                            type="button"
+                            onclick="limpiarFiltrosPlanesAhorro()"
+                            class="btn-secondary"
+                        >
+                            Limpiar filtros
+                        </button>
+                    </div>
                     <div class="card table-responsive">
                         <table class="table-base min-w-[1100px]">
                             <thead class="table-head">

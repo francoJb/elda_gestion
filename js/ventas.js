@@ -495,9 +495,123 @@ window.abrirHistorialPlanesAhorro = async () => {
         }
 
         historialPlanesAhorroCache = datos;
-        renderizarHistorialPlanesAhorro(datos);
-    } catch (error) {
+        window.filtrarHistorialPlanesAhorro();    } catch (error) {
         mostrarAlerta(error.message, 'Error al cargar historial', 'error');
+    }
+};
+
+window.imprimirConstanciaPlanAhorro = async planId => {
+    try {
+        const plan = historialPlanesAhorroCache.find(
+            item => String(item.plan_id) === String(planId)
+        );
+
+        if (!plan) {
+            throw new Error('No se encontró el plan en el historial. Actualizá la pantalla e intentá de nuevo.');
+        }
+
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF();
+        const empresa = await obtenerDatosEmpresaActual();
+        const margen = 20;
+        const ancho = doc.internal.pageSize.getWidth();
+        let y = margen;
+
+        const dinero = valor => Number(valor || 0).toLocaleString('es-AR', {
+            style: 'currency',
+            currency: 'ARS',
+            minimumFractionDigits: 2
+        });
+
+        const fecha = new Date(plan.fecha_creacion);
+        const fechaTexto = Number.isNaN(fecha.getTime())
+            ? 'No informada'
+            : fecha.toLocaleDateString('es-AR');
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(18);
+        doc.text('CONSTANCIA DEL PLAN DE AHORRO', ancho / 2, y, { align: 'center' });
+        y += 12;
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(10);
+        doc.text(empresa.razonSocial || '', margen, y);
+        y += 5;
+        doc.text(`CUIT: ${empresa.cuit || 'No informado'}`, margen, y);
+        y += 5;
+        doc.text(`Domicilio: ${empresa.domicilio || 'No informado'}`, margen, y);
+        y += 10;
+
+        doc.setFont('helvetica', 'bold');
+        doc.text(`Plan N°: ${plan.plan_id}`, margen, y);
+        y += 6;
+
+        doc.setFont('helvetica', 'normal');
+        doc.text(`Fecha de creación: ${fechaTexto}`, margen, y);
+        y += 6;
+        doc.text(`Estado: ${plan.estado || 'No informado'}`, margen, y);
+        y += 10;
+
+        doc.setFont('helvetica', 'bold');
+        doc.text('Cliente', margen, y);
+        y += 6;
+
+        doc.setFont('helvetica', 'normal');
+        doc.text(`Nombre: ${plan.cliente || 'No informado'}`, margen, y);
+        y += 5;
+        doc.text(`DNI: ${plan.cliente_dni || 'No informado'}`, margen, y);
+        y += 5;
+        doc.text(`CUIT: ${plan.cliente_cuit || 'No informado'}`, margen, y);
+        y += 5;
+        doc.text(`Domicilio: ${plan.cliente_direccion || 'No informado'}`, margen, y);
+        y += 10;
+
+        doc.setFont('helvetica', 'bold');
+        doc.text('Detalle del plan', margen, y);
+        y += 6;
+
+        doc.setFont('helvetica', 'normal');
+        doc.text(`Modelo solicitado: ${plan.producto || 'No informado'}`, margen, y);
+        y += 6;
+        doc.text(
+            `Precio acordado al crear el plan: ${plan.precio_acordado == null ? 'No registrado' : dinero(plan.precio_acordado)}`,
+            margen,
+            y
+        );
+        y += 6;
+        doc.text(`Total recibido: ${dinero(plan.total_recibido)}`, margen, y);
+        y += 6;
+        doc.text(`Total devuelto: ${dinero(plan.total_devuelto)}`, margen, y);
+        y += 6;
+        doc.text(`Aplicado a venta: ${dinero(plan.total_aplicado)}`, margen, y);
+        y += 6;
+        doc.text(`Saldo disponible: ${dinero(plan.saldo_disponible)}`, margen, y);
+        y += 8;
+
+        if (plan.observaciones) {
+            doc.text('Observaciones:', margen, y);
+            y += 5;
+            const observaciones = doc.splitTextToSize(
+                plan.observaciones,
+                ancho - margen * 2
+            );
+            doc.text(observaciones, margen, y);
+            y += observaciones.length * 5 + 5;
+        }
+
+        const aclaracion =
+            'Constancia informativa del estado del plan; no es factura ni comprobante fiscal. ' +
+            'El precio acordado aquí es una referencia histórica y no congela el precio del vehículo. ' +
+            'El precio aplicable se determinará al momento de la adjudicación.';
+
+        const lineas = doc.splitTextToSize(aclaracion, ancho - margen * 2);
+        doc.setFontSize(9);
+        doc.text(lineas, margen, y);
+
+        abrirPreviewPDF(doc, `Constancia_PlanAhorro_${plan.plan_id}.pdf`);
+    } catch (error) {
+        console.error('Error al generar constancia del plan:', error);
+        mostrarAlerta(error.message, 'No se pudo imprimir la constancia', 'error');
     }
 };
 
@@ -566,16 +680,52 @@ window.filtrarHistorialPlanesAhorro = () => {
         .trim()
         .toLowerCase();
 
-    const filtrados = historialPlanesAhorroCache.filter(plan =>
-        [
+    const estado = document.getElementById('filtroEstadoPlanes').value;
+    const desde = document.getElementById('filtroFechaDesdePlanes').value;
+    const hasta = document.getElementById('filtroFechaHastaPlanes').value;
+
+    const filtrados = historialPlanesAhorroCache.filter(plan => {
+        const coincideTexto = [
             plan.plan_id,
             plan.cliente,
             plan.producto,
             plan.estado
-        ].join(' ').toLowerCase().includes(texto)
-    );
+        ].join(' ').toLowerCase().includes(texto);
+
+        const coincideEstado = !estado || plan.estado === estado;
+
+        let coincideFecha = true;
+        if (desde || hasta) {
+            const fecha = new Date(plan.fecha_creacion);
+
+            if (Number.isNaN(fecha.getTime())) {
+                coincideFecha = false;
+            } else {
+                const fechaPlan = [
+                    fecha.getFullYear(),
+                    String(fecha.getMonth() + 1).padStart(2, '0'),
+                    String(fecha.getDate()).padStart(2, '0')
+                ].join('-');
+
+                coincideFecha =
+                    (!desde || fechaPlan >= desde) &&
+                    (!hasta || fechaPlan <= hasta);
+            }
+        }
+
+        return coincideTexto && coincideEstado && coincideFecha;
+    });
 
     renderizarHistorialPlanesAhorro(filtrados);
+};
+
+window.limpiarFiltrosPlanesAhorro = () => {
+    document.getElementById('filtroHistorialPlanes').value = '';
+    document.getElementById('filtroEstadoPlanes').value = '';
+    document.getElementById('filtroFechaDesdePlanes').value = '';
+    document.getElementById('filtroFechaHastaPlanes').value = '';
+
+    window.filtrarHistorialPlanesAhorro();
 };
 
 function renderizarHistorialPlanesAhorro(planes) {
@@ -629,6 +779,14 @@ function renderizarHistorialPlanesAhorro(planes) {
         botonMovimientos.setAttribute('aria-label', 'Ver movimientos del plan');
         botonMovimientos.className = 'text-blue-500 hover:scale-150 transition-transform mr-2';
         botonMovimientos.addEventListener('click', () => {window.verMovimientosPlan(plan.plan_id);});
+        const botonConstancia = document.createElement('button');
+        botonConstancia.type = 'button';
+        botonConstancia.textContent = '🖨️';
+        botonConstancia.title = 'Imprimir constancia del plan';
+        botonConstancia.setAttribute('aria-label', 'Imprimir constancia del plan');
+        botonConstancia.className = 'text-blue-500 hover:scale-150 transition-transform mr-2';
+        botonConstancia.addEventListener('click', () => {window.imprimirConstanciaPlanAhorro(plan.plan_id);});
+        celdaAcciones.appendChild(botonConstancia);
         celdaAcciones.appendChild(botonMovimientos);
 
         if (plan.estado === 'Activo') {
